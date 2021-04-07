@@ -22,16 +22,17 @@
 #include <wireguard/wireguard_send.h>
 #include <wireguard/wireguard_if.h>
 
-#define foreach_wg_input_error                          \
-  _(NONE, "No error")                                   \
-  _(HANDSHAKE_MAC, "Invalid MAC handshake")             \
-  _(PEER, "Peer error")                                 \
-  _(INTERFACE, "Interface error")                       \
-  _(DECRYPTION, "Failed during decryption")             \
-  _(KEEPALIVE_SEND, "Failed while sending Keepalive")   \
-  _(HANDSHAKE_SEND, "Failed while sending Handshake")   \
-  _(TOO_BIG, "Packet too big")                          \
-  _(UNDEFINED, "Undefined error")
+#define foreach_wg_input_error                                                \
+  _ (NONE, "No error")                                                        \
+  _ (HANDSHAKE_MAC, "Invalid MAC handshake")                                  \
+  _ (PEER, "Peer error")                                                      \
+  _ (INTERFACE, "Interface error")                                            \
+  _ (DECRYPTION, "Failed during decryption")                                  \
+  _ (KEEPALIVE_SEND, "Failed while sending Keepalive")                        \
+  _ (HANDSHAKE_SEND, "Failed while sending Handshake")                        \
+  _ (HANDSHAKE_RECEIVE, "Failed while receiving Handshake")                   \
+  _ (TOO_BIG, "Packet too big")                                               \
+  _ (UNDEFINED, "Undefined error")
 
 typedef enum
 {
@@ -245,7 +246,7 @@ wg_handshake_process (vlib_main_t * vm, wg_main_t * wmp, vlib_buffer_t * b)
 	break;
       }
     default:
-      break;
+      return WG_INPUT_ERROR_HANDSHAKE_RECEIVE;
     }
 
   wg_timers_any_authenticated_packet_received (peer);
@@ -368,7 +369,8 @@ VLIB_NODE_FN (wg_input_node) (vlib_main_t * vm,
 
 	  clib_memcpy (vlib_buffer_get_current (b[0]), decr_data, decr_len);
 	  b[0]->current_length = decr_len;
-	  b[0]->flags &= ~VNET_BUFFER_F_OFFLOAD_UDP_CKSUM;
+	  vnet_buffer_offload_flags_clear (b[0],
+					   VNET_BUFFER_OFFLOAD_F_UDP_CKSUM);
 
 	  wg_timers_any_authenticated_packet_received (peer);
 	  wg_timers_any_authenticated_packet_traversal (peer);

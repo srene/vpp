@@ -46,11 +46,14 @@ static u8 rdma_rss_hash_key[] = {
 
 rdma_main_t rdma_main;
 
-#define rdma_log__(lvl, dev, f, ...) \
-  do { \
-      vlib_log((lvl), rdma_main.log_class, "%s: " f, \
-               &(dev)->name, ##__VA_ARGS__); \
-  } while (0)
+/* (dev) is of type (rdma_device_t *) */
+#define rdma_log__(lvl, dev, f, ...)                                          \
+  do                                                                          \
+    {                                                                         \
+      vlib_log ((lvl), rdma_main.log_class, "%s: " f, (dev)->name,            \
+		##__VA_ARGS__);                                               \
+    }                                                                         \
+  while (0)
 
 #define rdma_log(lvl, dev, f, ...) \
    rdma_log__((lvl), (dev), "%s (%d): " f, strerror(errno), errno, ##__VA_ARGS__)
@@ -360,7 +363,7 @@ rdma_register_interface (vnet_main_t * vnm, rdma_device_t * rd)
   /* Indicate ability to support L3 DMAC filtering and
    * initialize interface to L3 non-promisc mode */
   vnet_hw_interface_t *hi = vnet_get_hw_interface (vnm, rd->hw_if_index);
-  hi->flags |= VNET_HW_INTERFACE_FLAG_SUPPORTS_MAC_FILTER;
+  hi->caps |= VNET_HW_INTERFACE_CAP_SUPPORTS_MAC_FILTER;
   ethernet_set_flags (vnm, rd->hw_if_index,
 		      ETHERNET_INTERFACE_FLAG_DEFAULT_L3);
   return err;
@@ -981,7 +984,7 @@ are explicitly disabled, and if the interface supports it.*/
   /*
    * FIXME: add support for interrupt mode
    * vnet_hw_interface_t *hw = vnet_get_hw_interface (vnm, rd->hw_if_index);
-   * hw->flags |= VNET_HW_INTERFACE_FLAG_SUPPORTS_INT_MODE;
+   * hw->caps |= VNET_HW_INTERFACE_CAP_SUPPORTS_INT_MODE;
    */
   vnet_hw_if_set_input_node (vnm, rd->hw_if_index, rdma_input_node.index);
 

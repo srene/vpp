@@ -25,7 +25,7 @@
 #include <avf/avf.h>
 
 #define AVF_MBOX_LEN 64
-#define AVF_MBOX_BUF_SZ 512
+#define AVF_MBOX_BUF_SZ 4096
 #define AVF_RXQ_SZ 512
 #define AVF_TXQ_SZ 512
 #define AVF_ITR_INT 250
@@ -183,7 +183,6 @@ retry:
 done:
   if (ad->flags & AVF_DEVICE_F_ELOG)
     {
-      /* *INDENT-OFF* */
       ELOG_TYPE_DECLARE (el) =
 	{
 	  .format = "avf[%d] aq enq: s_flags 0x%x r_flags 0x%x opcode 0x%x "
@@ -199,14 +198,13 @@ done:
 	  u16 datalen;
 	  u16 retval;
 	} *ed;
-      ed = ELOG_DATA (&vm->elog_main, el);
-      ed->dev_instance = ad->dev_instance;
-      ed->s_flags = dc.flags;
-      ed->r_flags = d->flags;
-      ed->opcode = dc.opcode;
-      ed->datalen = dc.datalen;
-      ed->retval = d->retval;
-      /* *INDENT-ON* */
+	ed = ELOG_DATA (&vlib_global_main.elog_main, el);
+	ed->dev_instance = ad->dev_instance;
+	ed->s_flags = dc.flags;
+	ed->r_flags = d->flags;
+	ed->opcode = dc.opcode;
+	ed->datalen = dc.datalen;
+	ed->retval = d->retval;
     }
 
   return err;
@@ -222,7 +220,6 @@ avf_cmd_rx_ctl_reg_write (vlib_main_t * vm, avf_device_t * ad, u32 reg,
 
   if (ad->flags & AVF_DEVICE_F_ELOG)
     {
-      /* *INDENT-OFF* */
       ELOG_TYPE_DECLARE (el) =
 	{
 	  .format = "avf[%d] rx ctl reg write: reg 0x%x val 0x%x ",
@@ -234,11 +231,10 @@ avf_cmd_rx_ctl_reg_write (vlib_main_t * vm, avf_device_t * ad, u32 reg,
 	  u32 reg;
 	  u32 val;
 	} *ed;
-      ed = ELOG_DATA (&vm->elog_main, el);
-      ed->dev_instance = ad->dev_instance;
-      ed->reg = reg;
-      ed->val = val;
-      /* *INDENT-ON* */
+	ed = ELOG_DATA (&vlib_global_main.elog_main, el);
+	ed->dev_instance = ad->dev_instance;
+	ed->reg = reg;
+	ed->val = val;
     }
   return err;
 }
@@ -470,11 +466,10 @@ retry:
 
   if (d->v_opcode != op)
     {
-      err =
-	clib_error_return (0,
-			   "unexpected message receiver [v_opcode = %u, "
-			   "expected %u, v_retval %d]", d->v_opcode, op,
-			   d->v_retval);
+      err = clib_error_return (0,
+			       "unexpected message received [v_opcode = %u, "
+			       "expected %u, v_retval %d]",
+			       d->v_opcode, op, d->v_retval);
       goto done;
     }
 
@@ -485,7 +480,7 @@ retry:
       goto done;
     }
 
-  if (d->flags & AVF_AQ_F_BUF)
+  if (out_len && d->flags & AVF_AQ_F_BUF)
     {
       void *buf = ad->arq_bufs + ad->arq_next_slot * AVF_MBOX_BUF_SZ;
       clib_memcpy_fast (out, buf, out_len);
@@ -500,7 +495,6 @@ done:
 
   if (ad->flags & AVF_DEVICE_F_ELOG)
     {
-      /* *INDENT-OFF* */
       ELOG_TYPE_DECLARE (el) =
 	{
 	  .format = "avf[%d] send to pf: v_opcode %s (%d) v_retval 0x%x",
@@ -519,12 +513,11 @@ done:
 	  u32 v_opcode_val;
 	  u32 v_retval;
 	} *ed;
-      ed = ELOG_DATA (&vm->elog_main, el);
-      ed->dev_instance = ad->dev_instance;
-      ed->v_opcode = op;
-      ed->v_opcode_val = op;
-      ed->v_retval = d->v_retval;
-      /* *INDENT-ON* */
+	ed = ELOG_DATA (&vlib_global_main.elog_main, el);
+	ed->dev_instance = ad->dev_instance;
+	ed->v_opcode = op;
+	ed->v_opcode_val = op;
+	ed->v_retval = d->v_retval;
     }
   return err;
 }
@@ -559,31 +552,32 @@ avf_op_get_vf_resources (vlib_main_t * vm, avf_device_t * ad,
   u32 bitmap = (VIRTCHNL_VF_OFFLOAD_L2 | VIRTCHNL_VF_OFFLOAD_RSS_PF |
 		VIRTCHNL_VF_OFFLOAD_WB_ON_ITR | VIRTCHNL_VF_OFFLOAD_VLAN |
 		VIRTCHNL_VF_OFFLOAD_RX_POLLING |
-		VIRTCHNL_VF_CAP_ADV_LINK_SPEED);
+		VIRTCHNL_VF_CAP_ADV_LINK_SPEED | VIRTCHNL_VF_OFFLOAD_FDIR_PF |
+		VIRTCHNL_VF_OFFLOAD_ADV_RSS_PF | VIRTCHNL_VF_OFFLOAD_VLAN_V2);
 
-  avf_log_debug (ad, "get_vf_reqources: bitmap 0x%x", bitmap);
+  avf_log_debug (ad, "get_vf_resources: bitmap 0x%x (%U)", bitmap,
+		 format_avf_vf_cap_flags, bitmap);
   err = avf_send_to_pf (vm, ad, VIRTCHNL_OP_GET_VF_RESOURCES, &bitmap,
 			sizeof (u32), res, sizeof (virtchnl_vf_resource_t));
 
   if (err == 0)
     {
       int i;
-      avf_log_debug (ad, "get_vf_reqources: num_vsis %u num_queue_pairs %u "
-		     "max_vectors %u max_mtu %u vf_offload_flags 0x%04x "
+      avf_log_debug (ad,
+		     "get_vf_resources: num_vsis %u num_queue_pairs %u "
+		     "max_vectors %u max_mtu %u vf_cap_flags 0x%x (%U) "
 		     "rss_key_size %u rss_lut_size %u",
 		     res->num_vsis, res->num_queue_pairs, res->max_vectors,
-		     res->max_mtu, res->vf_offload_flags, res->rss_key_size,
-		     res->rss_lut_size);
+		     res->max_mtu, res->vf_cap_flags, format_avf_vf_cap_flags,
+		     res->vf_cap_flags, res->rss_key_size, res->rss_lut_size);
       for (i = 0; i < res->num_vsis; i++)
-	avf_log_debug (ad, "get_vf_reqources_vsi[%u]: vsi_id %u "
-		       "num_queue_pairs %u vsi_type %u qset_handle %u "
-		       "default_mac_addr %U", i,
-		       res->vsi_res[i].vsi_id,
-		       res->vsi_res[i].num_queue_pairs,
-		       res->vsi_res[i].vsi_type,
-		       res->vsi_res[i].qset_handle,
-		       format_ethernet_address,
-		       res->vsi_res[i].default_mac_addr);
+	avf_log_debug (
+	  ad,
+	  "get_vf_resources_vsi[%u]: vsi_id %u num_queue_pairs %u vsi_type %u "
+	  "qset_handle %u default_mac_addr %U",
+	  i, res->vsi_res[i].vsi_id, res->vsi_res[i].num_queue_pairs,
+	  res->vsi_res[i].vsi_type, res->vsi_res[i].qset_handle,
+	  format_ethernet_address, res->vsi_res[i].default_mac_addr);
     }
 
   return err;
@@ -822,6 +816,39 @@ avf_op_get_stats (vlib_main_t * vm, avf_device_t * ad,
 }
 
 clib_error_t *
+avf_op_get_offload_vlan_v2_caps (vlib_main_t *vm, avf_device_t *ad,
+				 virtchnl_vlan_caps_t *vc)
+{
+  clib_error_t *err;
+
+  err = avf_send_to_pf (vm, ad, VIRTCHNL_OP_GET_OFFLOAD_VLAN_V2_CAPS, 0, 0, vc,
+			sizeof (virtchnl_vlan_caps_t));
+
+  avf_log_debug (ad, "get_offload_vlan_v2_caps:\n%U%U", format_white_space, 16,
+		 format_avf_vlan_caps, vc);
+
+  return err;
+}
+
+clib_error_t *
+avf_op_disable_vlan_stripping_v2 (vlib_main_t *vm, avf_device_t *ad, u32 outer,
+				  u32 inner)
+{
+  virtchnl_vlan_setting_t vs = {
+    .outer_ethertype_setting = outer,
+    .inner_ethertype_setting = inner,
+    .vport_id = ad->vsi_id,
+  };
+
+  avf_log_debug (ad, "disable_vlan_stripping_v2: outer: %U, inner %U",
+		 format_avf_vlan_support, outer, format_avf_vlan_support,
+		 inner);
+
+  return avf_send_to_pf (vm, ad, VIRTCHNL_OP_DISABLE_VLAN_STRIPPING_V2, &vs,
+			 sizeof (virtchnl_vlan_setting_t), 0, 0);
+}
+
+clib_error_t *
 avf_device_reset (vlib_main_t * vm, avf_device_t * ad)
 {
   avf_aq_desc_t d = { 0 };
@@ -953,20 +980,36 @@ avf_device_init (vlib_main_t * vm, avf_main_t * am, avf_device_t * ad,
     return clib_error_return (0, "unexpected GET_VF_RESOURCE reply received");
 
   ad->vsi_id = res.vsi_res[0].vsi_id;
-  ad->feature_bitmap = res.vf_offload_flags;
+  ad->cap_flags = res.vf_cap_flags;
   ad->num_queue_pairs = res.num_queue_pairs;
   ad->max_vectors = res.max_vectors;
   ad->max_mtu = res.max_mtu;
   ad->rss_key_size = res.rss_key_size;
   ad->rss_lut_size = res.rss_lut_size;
-  wb_on_itr = (ad->feature_bitmap & VIRTCHNL_VF_OFFLOAD_WB_ON_ITR) != 0;
+  wb_on_itr = (ad->cap_flags & VIRTCHNL_VF_OFFLOAD_WB_ON_ITR) != 0;
 
   clib_memcpy_fast (ad->hwaddr, res.vsi_res[0].default_mac_addr, 6);
 
   /*
    * Disable VLAN stripping
    */
-  if ((error = avf_op_disable_vlan_stripping (vm, ad)))
+  if (ad->cap_flags & VIRTCHNL_VF_OFFLOAD_VLAN_V2)
+    {
+      virtchnl_vlan_caps_t vc = {};
+      u32 outer = VIRTCHNL_VLAN_UNSUPPORTED, inner = VIRTCHNL_VLAN_UNSUPPORTED;
+      u32 mask = VIRTCHNL_VLAN_ETHERTYPE_8100;
+
+      if ((error = avf_op_get_offload_vlan_v2_caps (vm, ad, &vc)))
+	return error;
+
+      outer = vc.offloads.stripping_support.outer & mask;
+      inner = vc.offloads.stripping_support.inner & mask;
+
+      if ((outer || inner) &&
+	  (error = avf_op_disable_vlan_stripping_v2 (vm, ad, outer, inner)))
+	return error;
+    }
+  else if ((error = avf_op_disable_vlan_stripping (vm, ad)))
     return error;
 
   /*
@@ -999,12 +1042,11 @@ avf_device_init (vlib_main_t * vm, avf_main_t * am, avf_device_t * ad,
   else
     ad->n_rx_irqs = 1;
 
-
-  if ((ad->feature_bitmap & VIRTCHNL_VF_OFFLOAD_RSS_PF) &&
+  if ((ad->cap_flags & VIRTCHNL_VF_OFFLOAD_RSS_PF) &&
       (error = avf_op_config_rss_lut (vm, ad)))
     return error;
 
-  if ((ad->feature_bitmap & VIRTCHNL_VF_OFFLOAD_RSS_PF) &&
+  if ((ad->cap_flags & VIRTCHNL_VF_OFFLOAD_RSS_PF) &&
       (error = avf_op_config_rss_key (vm, ad)))
     return error;
 
@@ -1082,12 +1124,12 @@ avf_process_one_device (vlib_main_t * vm, avf_device_t * ad, int is_irq)
 	  u32 flags = 0;
 	  u32 mbps = 0;
 
-	  if (ad->feature_bitmap & VIRTCHNL_VF_CAP_ADV_LINK_SPEED)
+	  if (ad->cap_flags & VIRTCHNL_VF_CAP_ADV_LINK_SPEED)
 	    link_up = e->event_data.link_event_adv.link_status;
 	  else
 	    link_up = e->event_data.link_event.link_status;
 
-	  if (ad->feature_bitmap & VIRTCHNL_VF_CAP_ADV_LINK_SPEED)
+	  if (ad->cap_flags & VIRTCHNL_VF_CAP_ADV_LINK_SPEED)
 	    mbps = e->event_data.link_event_adv.link_speed;
 	  if (speed == VIRTCHNL_LINK_SPEED_40GB)
 	    mbps = 40000;
@@ -1137,10 +1179,10 @@ avf_process_one_device (vlib_main_t * vm, avf_device_t * ad, int is_irq)
 		  u8 link_status;
 		  u32 link_speed;
 		} *ed;
-	      ed = ELOG_DATA (&vm->elog_main, el);
-              ed->dev_instance = ad->dev_instance;
-	      ed->link_status = link_up;
-	      ed->link_speed = mbps;
+		ed = ELOG_DATA (&vlib_global_main.elog_main, el);
+		ed->dev_instance = ad->dev_instance;
+		ed->link_status = link_up;
+		ed->link_speed = mbps;
 	    }
 	}
       else
@@ -1158,10 +1200,10 @@ avf_process_one_device (vlib_main_t * vm, avf_device_t * ad, int is_irq)
 		  u32 event;
 		  u32 severity;
 		} *ed;
-	      ed = ELOG_DATA (&vm->elog_main, el);
-              ed->dev_instance = ad->dev_instance;
-	      ed->event = e->event;
-	      ed->severity = e->severity;
+		ed = ELOG_DATA (&vlib_global_main.elog_main, el);
+		ed->dev_instance = ad->dev_instance;
+		ed->event = e->event;
+		ed->severity = e->severity;
 	    }
 	}
     }
@@ -1176,6 +1218,20 @@ error:
   vlib_log_err (avf_log.class, "%U", format_clib_error, ad->error);
 }
 
+clib_error_t *
+avf_op_program_flow (vlib_main_t *vm, avf_device_t *ad, int is_create,
+		     u8 *rule, u32 rule_len, u8 *program_status,
+		     u32 status_len)
+{
+  avf_log_debug (ad, "avf_op_program_flow: vsi_id %u is_create %u", ad->vsi_id,
+		 is_create);
+
+  return avf_send_to_pf (vm, ad,
+			 is_create ? VIRTCHNL_OP_ADD_FDIR_FILTER :
+				     VIRTCHNL_OP_DEL_FDIR_FILTER,
+			 rule, rule_len, program_status, status_len);
+}
+
 static void
 avf_process_handle_request (vlib_main_t * vm, avf_process_req_t * req)
 {
@@ -1186,6 +1242,10 @@ avf_process_handle_request (vlib_main_t * vm, avf_process_req_t * req)
 					  req->is_add);
   else if (req->type == AVF_PROCESS_REQ_CONFIG_PROMISC_MDDE)
     req->error = avf_op_config_promisc_mode (vm, ad, req->is_enable);
+  else if (req->type == AVF_PROCESS_REQ_PROGRAM_FLOW)
+    req->error =
+      avf_op_program_flow (vm, ad, req->is_add, req->rule, req->rule_len,
+			   req->program_status, req->status_len);
   else
     clib_panic ("BUG: unknown avf proceess request type");
 
@@ -1355,7 +1415,7 @@ avf_irq_0_handler (vlib_main_t * vm, vlib_pci_dev_handle_t h, u16 line)
 	u32 icr0;
       } *ed;
 
-      ed = ELOG_DATA (&vm->elog_main, el);
+      ed = ELOG_DATA (&vlib_global_main.elog_main, el);
       ed->dev_instance = ad->dev_instance;
       ed->icr0 = icr0;
     }
@@ -1391,7 +1451,7 @@ avf_irq_n_handler (vlib_main_t * vm, vlib_pci_dev_handle_t h, u16 line)
 	u16 line;
       } *ed;
 
-      ed = ELOG_DATA (&vm->elog_main, el);
+      ed = ELOG_DATA (&vlib_global_main.elog_main, el);
       ed->dev_instance = ad->dev_instance;
       ed->line = line;
     }
@@ -1649,10 +1709,9 @@ avf_create_if (vlib_main_t * vm, avf_create_if_args_t * args)
   /* Indicate ability to support L3 DMAC filtering and
    * initialize interface to L3 non-promisc mode */
   vnet_hw_interface_t *hi = vnet_get_hw_interface (vnm, ad->hw_if_index);
-  hi->flags |=
-    VNET_HW_INTERFACE_FLAG_SUPPORTS_MAC_FILTER |
-    VNET_HW_INTERFACE_FLAG_SUPPORTS_TX_L4_CKSUM_OFFLOAD |
-    VNET_HW_INTERFACE_FLAG_SUPPORTS_GSO;
+  hi->caps |= VNET_HW_INTERFACE_CAP_SUPPORTS_MAC_FILTER |
+	      VNET_HW_INTERFACE_CAP_SUPPORTS_L4_TX_CKSUM |
+	      VNET_HW_INTERFACE_CAP_SUPPORTS_TCP_GSO;
   ethernet_set_flags (vnm, ad->hw_if_index,
 		      ETHERNET_INTERFACE_FLAG_DEFAULT_L3);
 
@@ -1660,7 +1719,7 @@ avf_create_if (vlib_main_t * vm, avf_create_if_args_t * args)
   args->sw_if_index = ad->sw_if_index = sw->sw_if_index;
 
   vnet_hw_interface_t *hw = vnet_get_hw_interface (vnm, ad->hw_if_index);
-  hw->flags |= VNET_HW_INTERFACE_FLAG_SUPPORTS_INT_MODE;
+  hw->caps |= VNET_HW_INTERFACE_CAP_SUPPORTS_INT_MODE;
   vnet_hw_if_set_input_node (vnm, ad->hw_if_index, avf_input_node.index);
 
   for (i = 0; i < ad->n_rx_queues; i++)
@@ -1728,7 +1787,7 @@ avf_interface_rx_mode_change (vnet_main_t * vnm, u32 hw_if_index, u32 qid,
     {
       if (rxq->int_mode == 0)
 	return 0;
-      if (ad->feature_bitmap & VIRTCHNL_VF_OFFLOAD_WB_ON_ITR)
+      if (ad->cap_flags & VIRTCHNL_VF_OFFLOAD_WB_ON_ITR)
 	avf_irq_n_set_state (ad, qid, AVF_IRQ_STATE_WB_ON_ITR);
       else
 	avf_irq_n_set_state (ad, qid, AVF_IRQ_STATE_ENABLED);
@@ -1794,9 +1853,26 @@ avf_clear_hw_interface_counters (u32 instance)
 		    &ad->eth_stats, sizeof (ad->eth_stats));
 }
 
-/* *INDENT-OFF* */
-VNET_DEVICE_CLASS (avf_device_class,) =
+clib_error_t *
+avf_program_flow (u32 dev_instance, int is_add, u8 *rule, u32 rule_len,
+		  u8 *program_status, u32 status_len)
 {
+  vlib_main_t *vm = vlib_get_main ();
+  avf_process_req_t req;
+
+  req.dev_instance = dev_instance;
+  req.type = AVF_PROCESS_REQ_PROGRAM_FLOW;
+  req.is_add = is_add;
+  req.rule = rule;
+  req.rule_len = rule_len;
+  req.program_status = program_status;
+  req.status_len = status_len;
+
+  return avf_process_request (vm, &req);
+}
+
+/* *INDENT-OFF* */
+VNET_DEVICE_CLASS (avf_device_class, ) = {
   .name = "Adaptive Virtual Function (AVF) interface",
   .clear_counters = avf_clear_hw_interface_counters,
   .format_device = format_avf_device,
@@ -1807,6 +1883,7 @@ VNET_DEVICE_CLASS (avf_device_class,) =
   .mac_addr_add_del_function = avf_add_del_mac_address,
   .tx_function_n_errors = AVF_TX_N_ERROR,
   .tx_function_error_strings = avf_tx_func_error_strings,
+  .flow_ops_function = avf_flow_ops_fn,
 };
 /* *INDENT-ON* */
 

@@ -1612,7 +1612,7 @@ show_interface_rx_placement_fn (vlib_main_t * vm, unformat_input_t * input,
   vnet_hw_if_rx_queue_t **all_queues = 0;
   vnet_hw_if_rx_queue_t **qptr;
   vnet_hw_if_rx_queue_t *q;
-  vec_foreach (q, vnm->interface_main.hw_if_rx_queues)
+  pool_foreach (q, vnm->interface_main.hw_if_rx_queues)
     vec_add1 (all_queues, q);
   vec_sort_with_function (all_queues, vnet_hw_if_rxq_cmp_cli_api);
   u32 prev_node = ~0;
@@ -1930,7 +1930,8 @@ int
 vnet_pcap_dispatch_trace_configure (vnet_pcap_dispatch_trace_args_t * a)
 {
   vlib_main_t *vm = vlib_get_main ();
-  vnet_pcap_t *pp = &vm->pcap;
+  vnet_main_t *vnm = vnet_get_main ();
+  vnet_pcap_t *pp = &vnm->pcap;
   pcap_main_t *pm = &pp->pcap_main;
   vnet_classify_main_t *cm = &vnet_classify_main;
 
@@ -1971,7 +1972,8 @@ vnet_pcap_dispatch_trace_configure (vnet_pcap_dispatch_trace_args_t * a)
 
   /* Classify filter specified, but no classify filter configured */
   if ((a->rx_enable + a->tx_enable + a->drop_enable) && a->filter &&
-      cm->classify_table_index_by_sw_if_index[0] == ~0)
+      (!cm->classify_table_index_by_sw_if_index ||
+       cm->classify_table_index_by_sw_if_index[0] == ~0))
     return VNET_API_ERROR_NO_SUCH_LABEL;
 
   if (a->rx_enable + a->tx_enable + a->drop_enable)

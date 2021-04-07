@@ -48,8 +48,8 @@ perfmon_reset (vlib_main_t *vm)
   uword page_size = clib_mem_get_page_size ();
 
   if (pm->is_running)
-    for (int i = 0; i < vec_len (vlib_mains); i++)
-      vlib_node_set_dispatch_wrapper (vlib_mains[i], 0);
+    for (int i = 0; i < vlib_get_n_threads (); i++)
+      vlib_node_set_dispatch_wrapper (vlib_get_main_by_index (i), 0);
 
   for (int i = 0; i < vec_len (pm->fds_to_close); i++)
     close (pm->fds_to_close[i]);
@@ -79,7 +79,7 @@ perfmon_reset (vlib_main_t *vm)
   pm->active_bundle = 0;
 }
 
-clib_error_t *
+static clib_error_t *
 perfmon_set (vlib_main_t *vm, perfmon_bundle_t *b)
 {
   clib_error_t *err = 0;
@@ -104,7 +104,7 @@ perfmon_set (vlib_main_t *vm, perfmon_bundle_t *b)
     {
       vec_add2 (pm->default_instance_type, it, 1);
       it->name = is_node ? "Thread/Node" : "Thread";
-      for (int i = 0; i < vec_len (vlib_mains); i++)
+      for (int i = 0; i < vlib_get_n_threads (); i++)
 	{
 	  vlib_worker_thread_t *w = vlib_worker_threads + i;
 	  perfmon_instance_t *in;
@@ -114,7 +114,7 @@ perfmon_set (vlib_main_t *vm, perfmon_bundle_t *b)
 	  in->name = (char *) format (0, "%s (%u)%c", w->name, i, 0);
 	}
       if (is_node)
-	vec_validate (pm->thread_runtimes, vec_len (vlib_mains) - 1);
+	vec_validate (pm->thread_runtimes, vlib_get_n_threads () - 1);
     }
   else
     {
@@ -212,16 +212,19 @@ error:
 }
 
 clib_error_t *
-perfmon_start (vlib_main_t *vm)
+perfmon_start (vlib_main_t *vm, perfmon_bundle_t *b)
 {
+  clib_error_t *err = 0;
   perfmon_main_t *pm = &perfmon_main;
-  int n_groups = vec_len (pm->group_fds);
-
-  if (n_groups == 0)
-    return clib_error_return (0, "no bundle configured");
+  int n_groups;
 
   if (pm->is_running == 1)
     return clib_error_return (0, "already running");
+
+  if ((err = perfmon_set (vm, b)) != 0)
+    return err;
+
+  n_groups = vec_len (pm->group_fds);
 
   for (int i = 0; i < n_groups; i++)
     {
@@ -234,11 +237,14 @@ perfmon_start (vlib_main_t *vm)
     }
   if (pm->active_bundle->type == PERFMON_BUNDLE_TYPE_NODE)
     {
-      for (int i = 0; i < vec_len (vlib_mains); i++)
-	vlib_node_set_dispatch_wrapper (vlib_mains[i],
+      for (int i = 0; i < vlib_get_n_threads (); i++)
+	vlib_node_set_dispatch_wrapper (vlib_get_main_by_index (i),
 					perfmon_dispatch_wrapper);
     }
+
+  pm->sample_time = vlib_time_now (vm);
   pm->is_running = 1;
+
   return 0;
 }
 
@@ -253,8 +259,8 @@ perfmon_stop (vlib_main_t *vm)
 
   if (pm->active_bundle->type == PERFMON_BUNDLE_TYPE_NODE)
     {
-      for (int i = 0; i < vec_len (vlib_mains); i++)
-	vlib_node_set_dispatch_wrapper (vlib_mains[i], 0);
+      for (int i = 0; i < vlib_get_n_threads (); i++)
+	vlib_node_set_dispatch_wrapper (vlib_get_main_by_index (i), 0);
     }
 
   for (int i = 0; i < n_groups; i++)
@@ -268,6 +274,7 @@ perfmon_stop (vlib_main_t *vm)
     }
 
   pm->is_running = 0;
+  pm->sample_time = vlib_time_now (vm) - pm->sample_time;
   return 0;
 }
 

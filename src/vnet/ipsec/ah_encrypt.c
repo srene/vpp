@@ -38,11 +38,10 @@ typedef enum
     AH_ENCRYPT_N_NEXT,
 } ah_encrypt_next_t;
 
-#define foreach_ah_encrypt_error                                \
- _(RX_PKTS, "AH pkts received")                                 \
- _(CRYPTO_ENGINE_ERROR, "crypto engine error (packet dropped)") \
- _(SEQ_CYCLED, "sequence number cycled")
-
+#define foreach_ah_encrypt_error                                              \
+  _ (RX_PKTS, "AH pkts received")                                             \
+  _ (CRYPTO_ENGINE_ERROR, "crypto engine error (packet dropped)")             \
+  _ (SEQ_CYCLED, "sequence number cycled (packet dropped)")
 
 typedef enum
 {
@@ -176,7 +175,7 @@ ah_encrypt_inline (vlib_main_t * vm,
 					     current_sa_pkts,
 					     current_sa_bytes);
 	  current_sa_index = vnet_buffer (b[0])->ipsec.sad_index;
-	  sa0 = pool_elt_at_index (im->sad, current_sa_index);
+	  sa0 = ipsec_sa_get (current_sa_index);
 
 	  current_sa_bytes = current_sa_pkts = 0;
 	}
@@ -195,6 +194,7 @@ ah_encrypt_inline (vlib_main_t * vm,
 
       if (PREDICT_TRUE (thread_index != sa0->thread_index))
 	{
+	  vnet_buffer (b[0])->ipsec.thread_index = sa0->thread_index;
 	  next[0] = AH_ENCRYPT_NEXT_HANDOFF;
 	  goto next;
 	}
@@ -386,7 +386,7 @@ ah_encrypt_inline (vlib_main_t * vm,
     next:
       if (PREDICT_FALSE (b[0]->flags & VLIB_BUFFER_IS_TRACED))
 	{
-	  sa0 = vec_elt_at_index (im->sad, pd->sa_index);
+	  sa0 = ipsec_sa_get (pd->sa_index);
 	  ah_encrypt_trace_t *tr =
 	    vlib_add_trace (vm, node, b[0], sizeof (*tr));
 	  tr->spi = sa0->spi;
@@ -499,6 +499,25 @@ VLIB_REGISTER_NODE (ah6_encrypt_node) = {
   },
 };
 /* *INDENT-ON* */
+
+#ifndef CLIB_MARCH_VARIANT
+
+static clib_error_t *
+ah_encrypt_init (vlib_main_t *vm)
+{
+  ipsec_main_t *im = &ipsec_main;
+
+  im->ah4_enc_fq_index =
+    vlib_frame_queue_main_init (ah4_encrypt_node.index, 0);
+  im->ah6_enc_fq_index =
+    vlib_frame_queue_main_init (ah6_encrypt_node.index, 0);
+
+  return 0;
+}
+
+VLIB_INIT_FUNCTION (ah_encrypt_init);
+
+#endif
 
 /*
  * fd.io coding-style-patch-verification: ON

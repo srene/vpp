@@ -774,7 +774,6 @@ setup_tx_node (vlib_main_t * vm,
 {
   vlib_node_t *n = vlib_get_node (vm, node_index);
 
-  n->function = dev_class->tx_function;
   n->format_trace = dev_class->format_tx_trace;
 
   /// XXX: Update this to use counter structure
@@ -810,7 +809,8 @@ vnet_register_interface (vnet_main_t * vnm,
   vnet_config_main_t *cm;
   u32 hw_index, i;
   char *tx_node_name = NULL, *output_node_name = NULL;
-  vlib_node_function_t *output_node = vnet_interface_output_node_get ();
+  vlib_node_t *if_out_node =
+    vlib_get_node (vm, vnet_interface_output_node.index);
 
   pool_get (im->hw_interfaces, hw);
   clib_memset (hw, 0, sizeof (*hw));
@@ -854,7 +854,7 @@ vnet_register_interface (vnet_main_t * vnm,
   hw->min_packet_bytes = 0;
   vnet_sw_interface_set_mtu (vnm, hw->sw_if_index, 0);
 
-  if (dev_class->tx_function == 0)
+  if (dev_class->tx_function == 0 && dev_class->tx_fn_registrations == 0)
     goto no_output_nodes;	/* No output/tx nodes to create */
 
   tx_node_name = (char *) format (0, "%v-tx", hw->name);
@@ -875,49 +875,57 @@ vnet_register_interface (vnet_main_t * vnm,
       vlib_node_rename (vm, hw->tx_node_index, "%v", tx_node_name);
       vlib_node_rename (vm, hw->output_node_index, "%v", output_node_name);
 
-      /* *INDENT-OFF* */
-      foreach_vlib_main ({
-        vnet_interface_output_runtime_t *rt;
+      foreach_vlib_main ()
+	{
+	  vnet_interface_output_runtime_t *rt;
 
-	rt = vlib_node_get_runtime_data (this_vlib_main, hw->output_node_index);
-	ASSERT (rt->is_deleted == 1);
-	rt->is_deleted = 0;
-	rt->hw_if_index = hw_index;
-	rt->sw_if_index = hw->sw_if_index;
-	rt->dev_instance = hw->dev_instance;
+	  rt =
+	    vlib_node_get_runtime_data (this_vlib_main, hw->output_node_index);
+	  ASSERT (rt->is_deleted == 1);
+	  rt->is_deleted = 0;
+	  rt->hw_if_index = hw_index;
+	  rt->sw_if_index = hw->sw_if_index;
+	  rt->dev_instance = hw->dev_instance;
 
-	rt = vlib_node_get_runtime_data (this_vlib_main, hw->tx_node_index);
-	rt->hw_if_index = hw_index;
-	rt->sw_if_index = hw->sw_if_index;
-	rt->dev_instance = hw->dev_instance;
-      });
-      /* *INDENT-ON* */
+	  rt = vlib_node_get_runtime_data (this_vlib_main, hw->tx_node_index);
+	  rt->hw_if_index = hw_index;
+	  rt->sw_if_index = hw->sw_if_index;
+	  rt->dev_instance = hw->dev_instance;
+	}
 
       /* The new class may differ from the old one.
        * Functions have to be updated. */
       node = vlib_get_node (vm, hw->output_node_index);
-      node->function = output_node;
       node->format_trace = format_vnet_interface_output_trace;
-      /* *INDENT-OFF* */
-      foreach_vlib_main ({
-        nrt = vlib_node_get_runtime (this_vlib_main, hw->output_node_index);
-        nrt->function = node->function;
-	vlib_node_runtime_perf_counter (this_vlib_main, nrt, 0, 0, 0,
-					VLIB_NODE_RUNTIME_PERF_RESET);
-      });
-      /* *INDENT-ON* */
+      node->node_fn_registrations = if_out_node->node_fn_registrations;
+      node->function = if_out_node->function;
+
+      foreach_vlib_main ()
+	{
+	  nrt = vlib_node_get_runtime (this_vlib_main, hw->output_node_index);
+	  nrt->function = node->function;
+	  vlib_node_runtime_perf_counter (this_vlib_main, nrt, 0, 0, 0,
+					  VLIB_NODE_RUNTIME_PERF_RESET);
+	}
 
       node = vlib_get_node (vm, hw->tx_node_index);
-      node->function = dev_class->tx_function;
+      if (dev_class->tx_fn_registrations)
+	{
+	  node->node_fn_registrations = dev_class->tx_fn_registrations;
+	  node->function = vlib_node_get_preferred_node_fn_variant (
+	    vm, dev_class->tx_fn_registrations);
+	}
+      else
+	node->function = dev_class->tx_function;
       node->format_trace = dev_class->format_tx_trace;
-      /* *INDENT-OFF* */
-      foreach_vlib_main ({
-        nrt = vlib_node_get_runtime (this_vlib_main, hw->tx_node_index);
-        nrt->function = node->function;
-	vlib_node_runtime_perf_counter (this_vlib_main, nrt, 0, 0, 0,
-					VLIB_NODE_RUNTIME_PERF_RESET);
-      });
-      /* *INDENT-ON* */
+
+      foreach_vlib_main ()
+	{
+	  nrt = vlib_node_get_runtime (this_vlib_main, hw->tx_node_index);
+	  nrt->function = node->function;
+	  vlib_node_runtime_perf_counter (this_vlib_main, nrt, 0, 0, 0,
+					  VLIB_NODE_RUNTIME_PERF_RESET);
+	}
 
       _vec_len (im->deleted_hw_interface_nodes) -= 1;
     }
@@ -940,7 +948,13 @@ vnet_register_interface (vnet_main_t * vnm,
 
       r.flags = VLIB_NODE_FLAG_IS_OUTPUT;
       r.name = tx_node_name;
-      r.function = dev_class->tx_function;
+      if (dev_class->tx_fn_registrations)
+	{
+	  r.function = 0;
+	  r.node_fn_registrations = dev_class->tx_fn_registrations;
+	}
+      else
+	r.function = dev_class->tx_function;
 
       hw->tx_node_index = vlib_register_node (vm, &r);
 
@@ -950,8 +964,14 @@ vnet_register_interface (vnet_main_t * vnm,
 
       r.flags = 0;
       r.name = output_node_name;
-      r.function = output_node;
       r.format_trace = format_vnet_interface_output_trace;
+      if (if_out_node->node_fn_registrations)
+	{
+	  r.function = 0;
+	  r.node_fn_registrations = if_out_node->node_fn_registrations;
+	}
+      else
+	r.function = if_out_node->function;
 
       {
 	static char *e[] = {
@@ -1053,17 +1073,15 @@ vnet_delete_hw_interface (vnet_main_t * vnm, u32 hw_if_index)
       /* Put output/tx nodes into recycle pool */
       vnet_hw_interface_nodes_t *dn;
 
-      /* *INDENT-OFF* */
-      foreach_vlib_main
-	({
+      foreach_vlib_main ()
+	{
 	  vnet_interface_output_runtime_t *rt =
 	    vlib_node_get_runtime_data (this_vlib_main, hw->output_node_index);
 
 	  /* Mark node runtime as deleted so output node (if called)
 	   * will drop packets. */
 	  rt->is_deleted = 1;
-	});
-      /* *INDENT-ON* */
+	}
 
       vlib_node_rename (vm, hw->output_node_index,
 			"interface-%d-output-deleted", hw_if_index);
@@ -1354,25 +1372,13 @@ vnet_interface_init (vlib_main_t * vm)
 	c->index = vec_len (im->device_classes);
 	hash_set_mem (im->device_class_by_name, c->name, c->index);
 
+	/* to avoid confusion, please remove ".tx_function" statement
+	  from VNET_DEVICE_CLASS() if using function candidates */
+	ASSERT (c->tx_fn_registrations == 0 || c->tx_function == 0);
+
 	if (c->tx_fn_registrations)
-	  {
-	    vlib_node_fn_registration_t *fnr = c->tx_fn_registrations;
-	    int priority = -1;
-
-	    /* to avoid confusion, please remove ".tx_function" statement
-	       from VNET_DEVICE_CLASS() if using function candidates */
-	    ASSERT (c->tx_function == 0);
-
-	    while (fnr)
-	      {
-		if (fnr->priority > priority)
-		  {
-		    priority = fnr->priority;
-		    c->tx_function = fnr->function;
-		  }
-		fnr = fnr->next_registration;
-	      }
-	  }
+	  c->tx_function = vlib_node_get_preferred_node_fn_variant (
+	    vm, c->tx_fn_registrations);
 
 	vec_add1 (im->device_classes, c[0]);
 	c = c->next_class_registration;

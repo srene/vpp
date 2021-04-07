@@ -84,6 +84,7 @@ runtest (char *s, bool should_fail)
   assert(name);
 
   uword *p = hash_get_mem(function_by_name_tojson, name);
+  printf ("Message name: %s\n", name);
   assert(p);
   tojson_fn_t tojson = (tojson_fn_t)p[0];
 
@@ -116,6 +117,56 @@ struct msgs msgs[] = {
     .tojson = (tojson_fn_t) vl_api_test_string2_t_tojson,
     .fromjson = (fromjson_fn_t) vl_api_test_string2_t_fromjson,
   },
+  {
+    .name = "test_vla",
+    .tojson = (tojson_fn_t) vl_api_test_vla_t_tojson,
+    .fromjson = (fromjson_fn_t) vl_api_test_vla_t_fromjson,
+  },
+  {
+    .name = "test_vla2",
+    .tojson = (tojson_fn_t) vl_api_test_vla2_t_tojson,
+    .fromjson = (fromjson_fn_t) vl_api_test_vla2_t_fromjson,
+  },
+  {
+    .name = "test_vla3",
+    .tojson = (tojson_fn_t) vl_api_test_vla3_t_tojson,
+    .fromjson = (fromjson_fn_t) vl_api_test_vla3_t_fromjson,
+  },
+  {
+    .name = "test_vla4",
+    .tojson = (tojson_fn_t) vl_api_test_vla4_t_tojson,
+    .fromjson = (fromjson_fn_t) vl_api_test_vla4_t_fromjson,
+  },
+  {
+    .name = "test_vla5",
+    .tojson = (tojson_fn_t) vl_api_test_vla5_t_tojson,
+    .fromjson = (fromjson_fn_t) vl_api_test_vla5_t_fromjson,
+  },
+  {
+    .name = "test_addresses",
+    .tojson = (tojson_fn_t) vl_api_test_addresses_t_tojson,
+    .fromjson = (fromjson_fn_t) vl_api_test_addresses_t_fromjson,
+  },
+  {
+    .name = "test_addresses2",
+    .tojson = (tojson_fn_t) vl_api_test_addresses2_t_tojson,
+    .fromjson = (fromjson_fn_t) vl_api_test_addresses2_t_fromjson,
+  },
+  {
+    .name = "test_addresses3",
+    .tojson = (tojson_fn_t) vl_api_test_addresses3_t_tojson,
+    .fromjson = (fromjson_fn_t) vl_api_test_addresses3_t_fromjson,
+  },
+  {
+    .name = "test_empty",
+    .tojson = (tojson_fn_t) vl_api_test_empty_t_tojson,
+    .fromjson = (fromjson_fn_t) vl_api_test_empty_t_fromjson,
+  },
+  {
+    .name = "test_interface",
+    .tojson = (tojson_fn_t) vl_api_test_interface_t_tojson,
+    .fromjson = (fromjson_fn_t) vl_api_test_interface_t_fromjson,
+  },
 };
 
 struct tests tests[] = {
@@ -128,6 +179,23 @@ struct tests tests[] = {
 	 "type\"}}" },
   { .s =
       "{\"_msgname\": \"test_string2\", \"str\": \"Test string toplevel\"}" },
+  { .s = "{\"_msgname\": \"test_vla\", \"count\": 5, \"vla\": [1,2,3,4,5]}" },
+  { .s = "{\"_msgname\": \"test_vla2\", \"count\": 5, \"vla\": "
+	 "\"0xaabbccddee\"}" },
+  { .s = "{\"_msgname\": \"test_vla3\", \"count\": 2, \"vla\": [{\"data\": 1} "
+	 ", {\"data\": 2} ] }" },
+  { .s = "{\"_msgname\": \"test_vla4\", \"data\": { \"count\": 5, \"vla\": "
+	 "[1,2,3,4,5] }}" },
+  { .s = "{\"_msgname\": \"test_vla5\", \"data\": { \"count\": 5, \"vla\": "
+	 "\"0xaabbccddee\" }}" },
+  { .s = "{\"_msgname\": \"test_addresses\", \"a\": \"1.2.3.4\" }" },
+  { .s = "{\"_msgname\": \"test_addresses\", \"a\": \"2001:db8::23\" }" },
+  { .s = "{\"_msgname\": \"test_addresses2\", \"a\": [\"2001:db8::23\", "
+	 "\"2001:db8::23\"] }" },
+  { .s = "{\"_msgname\": \"test_addresses3\", \"n\": 2, \"a\": "
+	 "[\"2001:db8::23\", \"2001:db8::23\"] }" },
+  { .s = "{\"_msgname\": \"test_empty\"}" },
+  { .s = "{\"_msgname\": \"test_interface\", \"sw_if_index\": 100 }" },
 };
 
 int main (int argc, char **argv)

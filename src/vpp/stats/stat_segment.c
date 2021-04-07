@@ -335,7 +335,10 @@ vlib_map_stat_segment_init (void)
 			      format_clib_error, clib_mem_get_last_error ());
   /* Set size */
   if ((ftruncate (mfd, memory_size)) == -1)
-    return clib_error_return (0, "stat segment ftruncate failure");
+    {
+      close (mfd);
+      return clib_error_return (0, "stat segment ftruncate failure");
+    }
 
   memaddr = clib_mem_vm_map_shared (0, memory_size, mfd, 0, mem_name);
 
@@ -587,9 +590,8 @@ update_node_counters (stat_segment_main_t * sm)
 }
 
 static void
-do_stat_segment_updates (stat_segment_main_t * sm)
+do_stat_segment_updates (vlib_main_t *vm, stat_segment_main_t *sm)
 {
-  vlib_main_t *vm = vlib_mains[0];
   f64 vector_rate;
   u64 input_packets;
   f64 dt, now;
@@ -620,12 +622,12 @@ do_stat_segment_updates (stat_segment_main_t * sm)
    */
   vector_rate = 0.0;
 
-  for (i = 0; i < vec_len (vlib_mains); i++)
+  for (i = 0; i < vlib_get_n_threads (); i++)
     {
 
       f64 this_vector_rate;
 
-      this_vlib_main = vlib_mains[i];
+      this_vlib_main = vlib_get_main_by_index (i);
 
       this_vector_rate = vlib_internal_node_vector_rate (this_vlib_main);
       vlib_clear_internal_node_vector_rate (this_vlib_main);
@@ -758,7 +760,7 @@ stat_segment_collector_process (vlib_main_t * vm, vlib_node_runtime_t * rt,
 
   while (1)
     {
-      do_stat_segment_updates (sm);
+      do_stat_segment_updates (vm, sm);
       vlib_process_suspend (vm, sm->update_interval);
     }
   return 0;			/* or not */

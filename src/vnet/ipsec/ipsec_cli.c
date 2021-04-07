@@ -98,7 +98,7 @@ ipsec_sa_add_del_command_fn (vlib_main_t * vm,
   u16 udp_src, udp_dst;
   int is_add, rv;
   u32 m_args = 0;
-  tunnel_t tun;
+  tunnel_t tun = {};
 
   salt = 0;
   error = NULL;
@@ -161,18 +161,14 @@ ipsec_sa_add_del_command_fn (vlib_main_t * vm,
 	flags |= IPSEC_SA_FLAG_USE_ESN;
       else if (unformat (line_input, "udp-encap"))
 	flags |= IPSEC_SA_FLAG_UDP_ENCAP;
+      else if (unformat (line_input, "async"))
+	flags |= IPSEC_SA_FLAG_IS_ASYNC;
       else
 	{
 	  error = clib_error_return (0, "parse error: '%U'",
 				     format_unformat_error, line_input);
 	  goto done;
 	}
-    }
-  if ((flags & IPSEC_SA_FLAG_IS_INBOUND)
-      && !(flags & IPSEC_SA_FLAG_IS_TUNNEL))
-    {
-      error = clib_error_return (0, "inbound specified on non-tunnel SA");
-      goto done;
     }
 
   if (!(m_args & 1))
@@ -198,7 +194,7 @@ ipsec_sa_add_del_command_fn (vlib_main_t * vm,
     }
 
   if (rv)
-    error = clib_error_return (0, "failed");
+    error = clib_error_return (0, "failed: %d", rv);
 
 done:
   unformat_free (line_input);
@@ -414,10 +410,11 @@ ipsec_sa_show_all (vlib_main_t * vm, ipsec_main_t * im, u8 detail)
   u32 sai;
 
   /* *INDENT-OFF* */
-  pool_foreach_index (sai, im->sad)  {
-    vlib_cli_output(vm, "%U", format_ipsec_sa, sai,
-                    (detail ? IPSEC_FORMAT_DETAIL : IPSEC_FORMAT_BRIEF));
-  }
+  pool_foreach_index (sai, ipsec_sa_pool)
+    {
+      vlib_cli_output (vm, "%U", format_ipsec_sa, sai,
+		       (detail ? IPSEC_FORMAT_DETAIL : IPSEC_FORMAT_BRIEF));
+    }
   /* *INDENT-ON* */
 }
 
@@ -521,7 +518,6 @@ static clib_error_t *
 clear_ipsec_sa_command_fn (vlib_main_t * vm,
 			   unformat_input_t * input, vlib_cli_command_t * cmd)
 {
-  ipsec_main_t *im = &ipsec_main;
   u32 sai = ~0;
 
   while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
@@ -535,14 +531,15 @@ clear_ipsec_sa_command_fn (vlib_main_t * vm,
   if (~0 == sai)
     {
       /* *INDENT-OFF* */
-      pool_foreach_index (sai, im->sad)  {
-        ipsec_sa_clear(sai);
-      }
+      pool_foreach_index (sai, ipsec_sa_pool)
+	{
+	  ipsec_sa_clear (sai);
+	}
       /* *INDENT-ON* */
     }
   else
     {
-      if (pool_is_free_index (im->sad, sai))
+      if (pool_is_free_index (ipsec_sa_pool, sai))
 	return clib_error_return (0, "unknown SA index: %d", sai);
       else
 	ipsec_sa_clear (sai);
@@ -939,7 +936,6 @@ set_async_mode_command_fn (vlib_main_t * vm, unformat_input_t * input,
 				   format_unformat_error, line_input));
     }
 
-  vnet_crypto_request_async_mode (async_enable);
   ipsec_set_async_mode (async_enable);
 
   unformat_free (line_input);

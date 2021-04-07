@@ -149,7 +149,7 @@ tcp_update_timestamp (tcp_connection_t * tc, u32 seq, u32 seq_end)
     {
       ASSERT (timestamp_leq (tc->tsval_recent, tc->rcv_opts.tsval));
       tc->tsval_recent = tc->rcv_opts.tsval;
-      tc->tsval_recent_age = tcp_time_now_w_thread (tc->c_thread_index);
+      tc->tsval_recent_age = tcp_time_tstamp (tc->c_thread_index);
     }
 }
 
@@ -288,7 +288,7 @@ tcp_segment_validate (tcp_worker_ctx_t * wrk, tcp_connection_t * tc0,
       /* If it just so happens that a segment updates tsval_recent for a
        * segment over 24 days old, invalidate tsval_recent. */
       if (timestamp_lt (tc0->tsval_recent_age + TCP_PAWS_IDLE,
-			tcp_time_now_w_thread (tc0->c_thread_index)))
+			tcp_time_tstamp (tc0->c_thread_index)))
 	{
 	  tc0->tsval_recent = tc0->rcv_opts.tsval;
 	  clib_warning ("paws failed: 24-day old segment");
@@ -1776,7 +1776,7 @@ tcp_check_tx_offload (tcp_connection_t * tc, int is_ipv4)
     return;
 
   hw_if = vnet_get_sup_hw_interface (vnm, sw_if_idx);
-  if (hw_if->flags & VNET_HW_INTERFACE_FLAG_SUPPORTS_GSO)
+  if (hw_if->caps & VNET_HW_INTERFACE_CAP_SUPPORTS_TCP_GSO)
     tc->cfg_flags |= TCP_CFG_F_TSO;
 }
 
@@ -1920,7 +1920,7 @@ tcp46_syn_sent_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
       if (tcp_opts_tstamp (&new_tc0->rcv_opts))
 	{
 	  new_tc0->tsval_recent = new_tc0->rcv_opts.tsval;
-	  new_tc0->tsval_recent_age = tcp_time_now ();
+	  new_tc0->tsval_recent_age = tcp_time_tstamp (my_thread_index);
 	}
 
       if (tcp_opts_wscale (&new_tc0->rcv_opts))
@@ -2830,7 +2830,7 @@ tcp46_input_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
   vlib_buffer_t *bufs[VLIB_FRAME_SIZE], **b;
   u16 nexts[VLIB_FRAME_SIZE], *next;
 
-  tcp_set_time_now (tcp_get_worker (thread_index));
+  tcp_update_time_now (tcp_get_worker (thread_index));
 
   from = vlib_frame_vector_args (frame);
   n_left_from = frame->n_vectors;

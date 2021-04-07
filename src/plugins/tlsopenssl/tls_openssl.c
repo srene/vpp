@@ -159,6 +159,9 @@ openssl_read_from_ssl_into_fifo (svm_fifo_t * f, SSL * ssl)
   u32 max_enq;
 
   max_enq = svm_fifo_max_enqueue_prod (f);
+  if (!max_enq)
+    return 0;
+
   n_fs = svm_fifo_provision_chunks (f, fs, n_segs, max_enq);
   if (n_fs < 0)
     return 0;
@@ -383,6 +386,9 @@ openssl_ctx_write_tls (tls_ctx_t *ctx, session_t *app_session,
 
 check_tls_fifo:
 
+  if (PREDICT_FALSE (ctx->app_closed && BIO_ctrl_pending (oc->rbio) <= 0))
+    openssl_confirm_app_close (ctx);
+
   /* Deschedule and wait for deq notification if fifo is almost full */
   enq_buf = clib_min (svm_fifo_size (ts->tx_fifo) / 2, TLSO_MIN_ENQ_SPACE);
   if (space < wrote + enq_buf)
@@ -472,7 +478,7 @@ openssl_ctx_read_tls (tls_ctx_t *ctx, session_t *tls_session)
 {
   openssl_ctx_t *oc = (openssl_ctx_t *) ctx;
   session_t *app_session;
-  int read, wrote = 0;
+  int read;
   svm_fifo_t *f;
 
   if (PREDICT_FALSE (SSL_in_init (oc->ssl)))
@@ -490,10 +496,11 @@ openssl_ctx_read_tls (tls_ctx_t *ctx, session_t *tls_session)
   if (read && app_session->session_state >= SESSION_STATE_READY)
     tls_notify_app_enqueue (ctx, app_session);
 
-  if (SSL_pending (oc->ssl) > 0)
+  if ((SSL_pending (oc->ssl) > 0) ||
+      svm_fifo_max_dequeue_cons (tls_session->rx_fifo))
     tls_add_vpp_q_builtin_rx_evt (tls_session);
 
-  return wrote;
+  return read;
 }
 
 static inline int

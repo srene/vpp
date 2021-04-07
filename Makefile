@@ -206,6 +206,7 @@ help:
 	@echo " checkstyle           - check coding style"
 	@echo " checkstyle-commit    - check commit message format"
 	@echo " checkstyle-test      - check test framework coding style"
+	@echo " checkstyle-test-diff - check test framework coding style (only changed files)"
 	@echo " checkstyle-api       - check api for incompatible changes"
 	@echo " fixstyle             - fix coding style"
 	@echo " doxygen              - (re)generate documentation"
@@ -218,6 +219,7 @@ help:
 	@echo " docs                 - Build the Sphinx documentation"
 	@echo " docs-venv            - Build the virtual environment for the Sphinx docs"
 	@echo " docs-clean           - Remove the generated files from the Sphinx docs"
+	@echo " stats-fs-help        - Help to build the stats segment file system"
 	@echo ""
 	@echo "Make Arguments:"
 	@echo " V=[0|1]                  - set build verbosity level"
@@ -477,6 +479,10 @@ test-wipe-all:
 test-checkstyle:
 	@make -C test checkstyle
 
+.PHONY: test-checkstyle-diff
+test-checkstyle-diff:
+	@make -C test checkstyle-diff
+
 .PHONY: test-refresh-deps
 test-refresh-deps:
 	@make -C test refresh-deps
@@ -535,6 +541,7 @@ debug:
 .PHONY: build-coverity
 build-coverity:
 	$(call make,$(PLATFORM)_coverity,install-packages)
+	@make -C build-root PLATFORM=vpp TAG=vpp_coverity libmemif-install
 
 .PHONY: debug-release
 debug-release:
@@ -619,9 +626,6 @@ compdb:
 
 .PHONY: checkstyle
 checkstyle: checkfeaturelist
-ifeq ($(shell which clang-format-10),)
-	@sudo apt-get install -y clang-format-10
-endif
 	@extras/scripts/checkstyle.sh
 
 .PHONY: checkstyle-commit
@@ -640,7 +644,7 @@ fixstyle:
 
 .PHONY: checkstyle-api
 checkstyle-api:
-	@extras/scripts/crcchecker.py --check-patch
+	@extras/scripts/crcchecker.py --check-patchset
 
 # necessary because Bug 1696324 - Update to python3.6 breaks PyYAML dependencies
 # Status:	CLOSED CANTFIX
@@ -658,6 +662,33 @@ featurelist: centos-pyyaml
 .PHONY: checkfeaturelist
 checkfeaturelist: centos-pyyaml
 	@build-root/scripts/fts.py --validate --all
+
+
+# Build vpp_stats_fs
+
+.PHONY: stats-fs-install
+stats-fs-install:
+	@extras/vpp_stats_fs/install.sh install
+
+.PHONY: stats-fs-start
+stats-fs-start:
+	@extras/vpp_stats_fs/install.sh start
+
+.PHONY: stats-fs-cleanup
+stats-fs-cleanup:
+	@extras/vpp_stats_fs/install.sh cleanup
+
+.PHONY: stats-fs-help
+stats-fs-help:
+	@extras/vpp_stats_fs/install.sh help
+
+.PHONY: stats-fs-force-unmount
+stats-fs-force-unmount:
+	@extras/vpp_stats_fs/install.sh unmount
+
+.PHONY: stats-fs-stop
+stats-fs-stop:
+	@extras/vpp_stats_fs/install.sh stop
 
 #
 # Build the documentation

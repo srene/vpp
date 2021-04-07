@@ -33,7 +33,7 @@ from vpp_bvi_interface import VppBviInterface
 from vpp_papi_provider import VppPapiProvider
 import vpp_papi
 from vpp_papi.vpp_stats import VPPStats
-from vpp_papi.vpp_transport_shmem import VppTransportShmemIOError
+from vpp_papi.vpp_transport_socket import VppTransportSocketIOError
 from log import RED, GREEN, YELLOW, double_line_delim, single_line_delim, \
     get_logger, colorize
 from vpp_object import VppObjectRegistry
@@ -106,13 +106,16 @@ class VppDiedError(Exception):
         if testcase is None and method_name is None:
             in_msg = ''
         else:
-            in_msg = 'running %s.%s ' % (testcase, method_name)
+            in_msg = ' while running %s.%s' % (testcase, method_name)
 
-        msg = "VPP subprocess died %sunexpectedly with return code: %d%s." % (
-            in_msg,
-            self.rv,
-            ' [%s]' % (self.signal_name if
-                       self.signal_name is not None else ''))
+        if self.rv:
+            msg = "VPP subprocess died unexpectedly%s with return code: %d%s."\
+                % (in_msg, self.rv, ' [%s]' %
+                   (self.signal_name if
+                    self.signal_name is not None else ''))
+        else:
+            msg = "VPP subprocess died unexpectedly%s." % in_msg
+
         super(VppDiedError, self).__init__(msg)
 
 
@@ -403,11 +406,18 @@ class VppTestCase(unittest.TestCase):
             coredump_size = "coredump-size unlimited"
 
         cpu_core_number = cls.get_least_used_cpu()
-        if not hasattr(cls, "worker_config"):
-            cls.worker_config = os.getenv("VPP_WORKER_CONFIG", "")
-            if cls.worker_config != "":
-                if cls.has_tag(TestCaseTag.FIXME_VPP_WORKERS):
-                    cls.worker_config = ""
+        if not hasattr(cls, "vpp_worker_count"):
+            cls.vpp_worker_count = 0
+            worker_config = os.getenv("VPP_WORKER_CONFIG", "")
+            if worker_config:
+                elems = worker_config.split(" ")
+                if elems[0] != "workers" or len(elems) != 2:
+                    raise ValueError("Wrong VPP_WORKER_CONFIG == '%s' value." %
+                                     worker_config)
+                cls.vpp_worker_count = int(elems[1])
+                if cls.vpp_worker_count > 0 and\
+                        cls.has_tag(TestCaseTag.FIXME_VPP_WORKERS):
+                    cls.vpp_worker_count = 0
 
         default_variant = os.getenv("VARIANT")
         if default_variant is not None:
@@ -419,25 +429,27 @@ class VppTestCase(unittest.TestCase):
         if api_fuzzing is None:
             api_fuzzing = 'off'
 
-        cls.vpp_cmdline = [cls.vpp_bin, "unix",
-                           "{", "nodaemon", debug_cli, "full-coredump",
-                           coredump_size, "runtime-dir", cls.tempdir, "}",
-                           "api-trace", "{", "on", "}", "api-segment", "{",
-                           "prefix", cls.shm_prefix, "}", "cpu", "{",
-                           "main-core", str(cpu_core_number),
-                           cls.worker_config, "}",
-                           "physmem", "{", "max-size", "32m", "}",
-                           "statseg", "{", "socket-name", cls.stats_sock, "}",
-                           "socksvr", "{", "socket-name", cls.api_sock, "}",
-                           "node { ", default_variant, "}",
-                           "api-fuzz {", api_fuzzing, "}",
-                           "plugins",
-                           "{", "plugin", "dpdk_plugin.so", "{", "disable",
-                           "}", "plugin", "rdma_plugin.so", "{", "disable",
-                           "}", "plugin", "lisp_unittest_plugin.so", "{",
-                           "enable",
-                           "}", "plugin", "unittest_plugin.so", "{", "enable",
-                           "}"] + cls.extra_vpp_plugin_config + ["}", ]
+        cls.vpp_cmdline = [
+            cls.vpp_bin,
+            "unix", "{", "nodaemon", debug_cli, "full-coredump",
+            coredump_size, "runtime-dir", cls.tempdir, "}",
+            "api-trace", "{", "on", "}",
+            "api-segment", "{", "prefix", cls.shm_prefix, "}",
+            "cpu", "{", "main-core", str(cpu_core_number), ]
+        if cls.vpp_worker_count:
+            cls.vpp_cmdline.extend(["workers", str(cls.vpp_worker_count)])
+        cls.vpp_cmdline.extend([
+            "}",
+            "physmem", "{", "max-size", "32m", "}",
+            "statseg", "{", "socket-name", cls.stats_sock, "}",
+            "socksvr", "{", "socket-name", cls.api_sock, "}",
+            "node { ", default_variant, "}",
+            "api-fuzz {", api_fuzzing, "}",
+            "plugins", "{", "plugin", "dpdk_plugin.so", "{", "disable", "}",
+            "plugin", "rdma_plugin.so", "{", "disable", "}",
+            "plugin", "lisp_unittest_plugin.so", "{", "enable", "}",
+            "plugin", "unittest_plugin.so", "{", "enable", "}"
+        ] + cls.extra_vpp_plugin_config + ["}", ])
 
         if cls.extra_vpp_punt_config is not None:
             cls.vpp_cmdline.extend(cls.extra_vpp_punt_config)
@@ -561,14 +573,15 @@ class VppTestCase(unittest.TestCase):
         cls.logger.addHandler(cls.file_handler)
         cls.logger.debug("--- setUpClass() for %s called ---" %
                          cls.__name__)
-        cls.shm_prefix = os.path.basename(cls.tempdir)
+        cls.shm_prefix = os.path.basename(cls.tempdir)  # Only used for VAPI
         os.chdir(cls.tempdir)
-        cls.logger.info("Temporary dir is %s, shm prefix is %s",
-                        cls.tempdir, cls.shm_prefix)
+        cls.logger.info("Temporary dir is %s, api socket is %s",
+                        cls.tempdir, cls.api_sock)
         cls.logger.debug("Random seed is %s" % seed)
         cls.setUpConstants()
         cls.reset_packet_infos()
         cls._captures = []
+        cls._old_captures = []
         cls.verbose = 0
         cls.vpp_dead = False
         cls.registry = VppObjectRegistry()
@@ -590,7 +603,7 @@ class VppTestCase(unittest.TestCase):
             cls.pump_thread.start()
             if cls.debug_gdb or cls.debug_gdbserver:
                 cls.vapi_response_timeout = 0
-            cls.vapi = VppPapiProvider(cls.shm_prefix, cls.shm_prefix, cls,
+            cls.vapi = VppPapiProvider(cls.__name__, cls,
                                        cls.vapi_response_timeout)
             if cls.step:
                 hook = hookmodule.StepHook(cls)
@@ -608,7 +621,7 @@ class VppTestCase(unittest.TestCase):
                 raise
             try:
                 cls.vapi.connect()
-            except vpp_papi.VPPIOError as e:
+            except (vpp_papi.VPPIOError, Exception) as e:
                 cls.logger.debug("Exception connecting to vapi: %s" % e)
                 cls.vapi.disconnect()
 
@@ -616,15 +629,15 @@ class VppTestCase(unittest.TestCase):
                     print(colorize("You're running VPP inside gdbserver but "
                                    "VPP-API connection failed, did you forget "
                                    "to 'continue' VPP from within gdb?", RED))
-                raise
+                raise e
         except vpp_papi.VPPRuntimeError as e:
             cls.logger.debug("%s" % e)
             cls.quit()
-            raise
+            raise e
         except Exception as e:
             cls.logger.debug("Exception connecting to VPP: %s" % e)
             cls.quit()
-            raise
+            raise e
 
     @classmethod
     def _debug_quit(cls):
@@ -676,9 +689,15 @@ class VppTestCase(unittest.TestCase):
                 cls.logger.debug("Sending TERM to vpp")
                 cls.vpp.terminate()
                 cls.logger.debug("Waiting for vpp to die")
-                cls.vpp.communicate()
+                try:
+                    outs, errs = cls.vpp.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    cls.vpp.kill()
+                    outs, errs = cls.vpp.communicate()
             cls.logger.debug("Deleting class vpp attribute on %s",
                              cls.__name__)
+            cls.vpp.stdout.close()
+            cls.vpp.stderr.close()
             del cls.vpp
 
         if cls.vpp_startup_failed:
@@ -753,8 +772,8 @@ class VppTestCase(unittest.TestCase):
             os.rename(tmp_api_trace, vpp_api_trace_log)
             self.logger.info(self.vapi.ppcli("api trace custom-dump %s" %
                                              vpp_api_trace_log))
-        except VppTransportShmemIOError:
-            self.logger.debug("VppTransportShmemIOError: Vpp dead. "
+        except VppTransportSocketIOError:
+            self.logger.debug("VppTransportSocketIOError: Vpp dead. "
                               "Cannot log show commands.")
             self.vpp_dead = True
         else:
@@ -765,7 +784,6 @@ class VppTestCase(unittest.TestCase):
         super(VppTestCase, self).setUp()
         self.reporter.send_keep_alive(self)
         if self.vpp_dead:
-
             raise VppDiedError(rv=None, testcase=self.__class__.__name__,
                                method_name=self._testMethodName)
         self.sleep(.1, "during setUp")
@@ -797,10 +815,10 @@ class VppTestCase(unittest.TestCase):
             i.enable_capture()
 
     @classmethod
-    def register_capture(cls, cap_name):
+    def register_capture(cls, intf, worker):
         """ Register a capture in the testclass """
         # add to the list of captures with current timestamp
-        cls._captures.append((time.time(), cap_name))
+        cls._captures.append((intf, worker))
 
     @classmethod
     def get_vpp_time(cls):
@@ -822,9 +840,15 @@ class VppTestCase(unittest.TestCase):
             cls.sleep(0.1)
 
     @classmethod
-    def pg_start(cls):
+    def pg_start(cls, trace=True):
         """ Enable the PG, wait till it is done, then clean up """
-        cls.vapi.cli("trace add pg-input 1000")
+        for (intf, worker) in cls._old_captures:
+            intf.rename_previous_capture_file(intf.get_in_path(worker),
+                                              intf.in_history_counter)
+        cls._old_captures = []
+        if trace:
+            cls.vapi.cli("clear trace")
+            cls.vapi.cli("trace add pg-input 1000")
         cls.vapi.cli('packet-generator enable')
         # PG, when starts, runs to completion -
         # so let's avoid a race condition,
@@ -836,8 +860,10 @@ class VppTestCase(unittest.TestCase):
             if time.time() > deadline:
                 cls.logger.error("Timeout waiting for pg to stop")
                 break
-        for stamp, cap_name in cls._captures:
-            cls.vapi.cli('packet-generator delete %s' % cap_name)
+        for intf, worker in cls._captures:
+            cls.vapi.cli('packet-generator delete %s' %
+                         intf.get_cap_name(worker))
+        cls._old_captures = cls._captures
         cls._captures = []
 
     @classmethod
@@ -1158,7 +1184,7 @@ class VppTestCase(unittest.TestCase):
                           "packet counter `%s'" % counter)
 
     def assert_error_counter_equal(self, counter, expected_value):
-        counter_value = self.statistics.get_err_counter(counter)
+        counter_value = self.statistics[counter].sum()
         self.assert_equal(counter_value, expected_value,
                           "error counter `%s'" % counter)
 
@@ -1187,14 +1213,13 @@ class VppTestCase(unittest.TestCase):
                              after - before, timeout)
 
         cls.logger.debug(
-                "Finished sleep (%s) - slept %es (wanted %es)",
-                remark, after - before, timeout)
+            "Finished sleep (%s) - slept %es (wanted %es)",
+            remark, after - before, timeout)
 
-    def pg_send(self, intf, pkts, worker=None):
-        self.vapi.cli("clear trace")
+    def pg_send(self, intf, pkts, worker=None, trace=True):
         intf.add_stream(pkts, worker=worker)
         self.pg_enable_capture(self.pg_interfaces)
-        self.pg_start()
+        self.pg_start(trace=trace)
 
     def send_and_assert_no_replies(self, intf, pkts, remark="", timeout=None):
         self.pg_send(intf, pkts)
@@ -1205,10 +1230,11 @@ class VppTestCase(unittest.TestCase):
             i.assert_nothing_captured(remark=remark)
             timeout = 0.1
 
-    def send_and_expect(self, intf, pkts, output, n_rx=None, worker=None):
+    def send_and_expect(self, intf, pkts, output, n_rx=None, worker=None,
+                        trace=True):
         if not n_rx:
             n_rx = len(pkts)
-        self.pg_send(intf, pkts, worker=worker)
+        self.pg_send(intf, pkts, worker=worker, trace=trace)
         rx = output.get_capture(n_rx)
         return rx
 
@@ -1328,13 +1354,13 @@ class VppTestResult(unittest.TestResult):
                     os.path.basename(self.current_test_case_info.tempdir))
 
                 self.current_test_case_info.logger.debug(
-                        "creating a link to the failed test")
+                    "creating a link to the failed test")
                 self.current_test_case_info.logger.debug(
-                        "os.symlink(%s, %s)" %
-                        (self.current_test_case_info.tempdir, link_path))
+                    "os.symlink(%s, %s)" %
+                    (self.current_test_case_info.tempdir, link_path))
                 if os.path.exists(link_path):
                     self.current_test_case_info.logger.debug(
-                            'symlink already exists')
+                        'symlink already exists')
                 else:
                     os.symlink(self.current_test_case_info.tempdir, link_path)
 

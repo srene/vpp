@@ -143,7 +143,8 @@ tso_segment_vxlan_tunnel_headers_fixup (vlib_main_t * vm, vlib_buffer_t * b,
 	{
 	  udp->checksum = ip4_tcp_udp_compute_checksum (vm, b, ip4);
 	}
-      b->flags &= ~VNET_BUFFER_F_OFFLOAD_UDP_CKSUM;
+      /* FIXME: it should be OUTER_UDP_CKSUM */
+      vnet_buffer_offload_flags_clear (b, VNET_BUFFER_OFFLOAD_F_UDP_CKSUM);
     }
 }
 
@@ -281,7 +282,8 @@ tso_fixup_segmented_buf (vlib_main_t * vm, vlib_buffer_t * b0, u8 tcp_flags,
 	  tcp->checksum = 0;
 	  tcp->checksum =
 	    ip6_tcp_udp_icmp_compute_checksum (vm, b0, ip6, &bogus);
-	  b0->flags &= ~VNET_BUFFER_F_OFFLOAD_TCP_CKSUM;
+	  vnet_buffer_offload_flags_clear (b0,
+					   VNET_BUFFER_OFFLOAD_F_TCP_CKSUM);
 	}
     }
   else
@@ -295,8 +297,8 @@ tso_fixup_segmented_buf (vlib_main_t * vm, vlib_buffer_t * b0, u8 tcp_flags,
 	  tcp->checksum = 0;
 	  tcp->checksum = ip4_tcp_udp_compute_checksum (vm, b0, ip4);
 	}
-      b0->flags &= ~VNET_BUFFER_F_OFFLOAD_TCP_CKSUM;
-      b0->flags &= ~VNET_BUFFER_F_OFFLOAD_IP_CKSUM;
+      vnet_buffer_offload_flags_clear (b0, (VNET_BUFFER_OFFLOAD_F_IP_CKSUM |
+					    VNET_BUFFER_OFFLOAD_F_TCP_CKSUM));
     }
 
   if (!is_l2 && ((gho->gho_flags & GHO_F_TUNNEL) == 0))
@@ -521,28 +523,30 @@ vnet_gso_node_inline (vlib_main_t * vm,
 	    if (PREDICT_FALSE (hi->sw_if_index != swif0))
 	      {
 		hi0 = vnet_get_sup_hw_interface (vnm, swif0);
-		if ((hi0->flags & VNET_HW_INTERFACE_FLAG_SUPPORTS_GSO) == 0 &&
+		if ((hi0->caps & VNET_HW_INTERFACE_CAP_SUPPORTS_TCP_GSO) ==
+		      0 &&
 		    (b[0]->flags & VNET_BUFFER_F_GSO))
 		  break;
 	      }
 	    if (PREDICT_FALSE (hi->sw_if_index != swif1))
 	      {
 		hi1 = vnet_get_sup_hw_interface (vnm, swif1);
-		if (!(hi1->flags & VNET_HW_INTERFACE_FLAG_SUPPORTS_GSO) &&
+		if (!(hi1->caps & VNET_HW_INTERFACE_CAP_SUPPORTS_TCP_GSO) &&
 		    (b[1]->flags & VNET_BUFFER_F_GSO))
 		  break;
 	      }
 	    if (PREDICT_FALSE (hi->sw_if_index != swif2))
 	      {
 		hi2 = vnet_get_sup_hw_interface (vnm, swif2);
-		if ((hi2->flags & VNET_HW_INTERFACE_FLAG_SUPPORTS_GSO) == 0 &&
+		if ((hi2->caps & VNET_HW_INTERFACE_CAP_SUPPORTS_TCP_GSO) ==
+		      0 &&
 		    (b[2]->flags & VNET_BUFFER_F_GSO))
 		  break;
 	      }
 	    if (PREDICT_FALSE (hi->sw_if_index != swif3))
 	      {
 		hi3 = vnet_get_sup_hw_interface (vnm, swif3);
-		if (!(hi3->flags & VNET_HW_INTERFACE_FLAG_SUPPORTS_GSO) &&
+		if (!(hi3->caps & VNET_HW_INTERFACE_CAP_SUPPORTS_TCP_GSO) &&
 		    (b[3]->flags & VNET_BUFFER_F_GSO))
 		  break;
 	      }
@@ -613,7 +617,7 @@ vnet_gso_node_inline (vlib_main_t * vm,
 	  if (PREDICT_FALSE (hi->sw_if_index != swif0))
 	    {
 	      hi0 = vnet_get_sup_hw_interface (vnm, swif0);
-	      if ((hi0->flags & VNET_HW_INTERFACE_FLAG_SUPPORTS_GSO) == 0 &&
+	      if ((hi0->caps & VNET_HW_INTERFACE_CAP_SUPPORTS_TCP_GSO) == 0 &&
 		  (b[0]->flags & VNET_BUFFER_F_GSO))
 		do_segmentation0 = 1;
 	    }
@@ -772,7 +776,7 @@ vnet_gso_inline (vlib_main_t * vm,
       hi = vnet_get_sup_hw_interface (vnm,
 				      vnet_buffer (b)->sw_if_index[VLIB_TX]);
 
-      if (hi->flags & VNET_HW_INTERFACE_FLAG_SUPPORTS_GSO)
+      if (hi->caps & VNET_HW_INTERFACE_CAP_SUPPORTS_TCP_GSO)
 	return vnet_gso_node_inline (vm, node, frame, vnm, hi,
 				     is_l2, is_ip4, is_ip6,
 				     /* do_segmentation */ 0);

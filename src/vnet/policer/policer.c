@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 #include <stdint.h>
+#include <stdbool.h>
 #include <vnet/policer/policer.h>
 #include <vnet/policer/police_inlines.h>
 #include <vnet/classify/vnet_classify.h>
@@ -49,14 +50,12 @@ vlib_combined_counter_main_t policer_counters[] = {
 };
 
 clib_error_t *
-policer_add_del (vlib_main_t * vm,
-		 u8 * name,
-		 sse2_qos_pol_cfg_params_st * cfg,
-		 u32 * policer_index, u8 is_add)
+policer_add_del (vlib_main_t *vm, u8 *name, qos_pol_cfg_params_st *cfg,
+		 u32 *policer_index, u8 is_add)
 {
   vnet_policer_main_t *pm = &vnet_policer_main;
-  policer_read_response_type_st test_policer;
-  policer_read_response_type_st *policer;
+  policer_t test_policer;
+  policer_t *policer;
   uword *p;
   u32 pi;
   int rv;
@@ -96,12 +95,12 @@ policer_add_del (vlib_main_t * vm,
     }
 
   /* Vet the configuration before adding it to the table */
-  rv = sse2_pol_logical_2_physical (cfg, &test_policer);
+  rv = pol_logical_2_physical (cfg, &test_policer);
 
   if (rv == 0)
     {
-      policer_read_response_type_st *pp;
-      sse2_qos_pol_cfg_params_st *cp;
+      policer_t *pp;
+      qos_pol_cfg_params_st *cp;
       int i;
 
       pool_get (pm->configs, cp);
@@ -135,11 +134,73 @@ policer_add_del (vlib_main_t * vm,
   return 0;
 }
 
+int
+policer_bind_worker (u8 *name, u32 worker, bool bind)
+{
+  vnet_policer_main_t *pm = &vnet_policer_main;
+  policer_t *policer;
+  uword *p;
+
+  p = hash_get_mem (pm->policer_index_by_name, name);
+  if (p == 0)
+    {
+      return VNET_API_ERROR_NO_SUCH_ENTRY;
+    }
+
+  policer = &pm->policers[p[0]];
+
+  if (bind)
+    {
+      if (worker >= vlib_num_workers ())
+	{
+	  return VNET_API_ERROR_INVALID_WORKER;
+	}
+
+      policer->thread_index = vlib_get_worker_thread_index (worker);
+    }
+  else
+    {
+      policer->thread_index = ~0;
+    }
+  return 0;
+}
+
+int
+policer_input (u8 *name, u32 sw_if_index, bool apply)
+{
+  vnet_policer_main_t *pm = &vnet_policer_main;
+  policer_t *policer;
+  u32 policer_index;
+  uword *p;
+
+  p = hash_get_mem (pm->policer_index_by_name, name);
+  if (p == 0)
+    {
+      return VNET_API_ERROR_NO_SUCH_ENTRY;
+    }
+
+  policer = &pm->policers[p[0]];
+  policer_index = policer - pm->policers;
+
+  if (apply)
+    {
+      vec_validate (pm->policer_index_by_sw_if_index, sw_if_index);
+      pm->policer_index_by_sw_if_index[sw_if_index] = policer_index;
+    }
+  else
+    {
+      pm->policer_index_by_sw_if_index[sw_if_index] = ~0;
+    }
+
+  vnet_feature_enable_disable ("device-input", "policer-input", sw_if_index,
+			       apply, 0, 0);
+  return 0;
+}
+
 u8 *
 format_policer_instance (u8 * s, va_list * va)
 {
-  policer_read_response_type_st *i
-    = va_arg (*va, policer_read_response_type_st *);
+  policer_t *i = va_arg (*va, policer_t *);
   uword pi = va_arg (*va, uword);
   int result;
   vlib_counter_t counts[NUM_POLICE_RESULTS];
@@ -171,13 +232,13 @@ format_policer_instance (u8 * s, va_list * va)
 static u8 *
 format_policer_round_type (u8 * s, va_list * va)
 {
-  sse2_qos_pol_cfg_params_st *c = va_arg (*va, sse2_qos_pol_cfg_params_st *);
+  qos_pol_cfg_params_st *c = va_arg (*va, qos_pol_cfg_params_st *);
 
-  if (c->rnd_type == SSE2_QOS_ROUND_TO_CLOSEST)
+  if (c->rnd_type == QOS_ROUND_TO_CLOSEST)
     s = format (s, "closest");
-  else if (c->rnd_type == SSE2_QOS_ROUND_TO_UP)
+  else if (c->rnd_type == QOS_ROUND_TO_UP)
     s = format (s, "up");
-  else if (c->rnd_type == SSE2_QOS_ROUND_TO_DOWN)
+  else if (c->rnd_type == QOS_ROUND_TO_DOWN)
     s = format (s, "down");
   else
     s = format (s, "ILLEGAL");
@@ -188,11 +249,11 @@ format_policer_round_type (u8 * s, va_list * va)
 static u8 *
 format_policer_rate_type (u8 * s, va_list * va)
 {
-  sse2_qos_pol_cfg_params_st *c = va_arg (*va, sse2_qos_pol_cfg_params_st *);
+  qos_pol_cfg_params_st *c = va_arg (*va, qos_pol_cfg_params_st *);
 
-  if (c->rate_type == SSE2_QOS_RATE_KBPS)
+  if (c->rate_type == QOS_RATE_KBPS)
     s = format (s, "kbps");
-  else if (c->rate_type == SSE2_QOS_RATE_PPS)
+  else if (c->rate_type == QOS_RATE_PPS)
     s = format (s, "pps");
   else
     s = format (s, "ILLEGAL");
@@ -202,21 +263,21 @@ format_policer_rate_type (u8 * s, va_list * va)
 static u8 *
 format_policer_type (u8 * s, va_list * va)
 {
-  sse2_qos_pol_cfg_params_st *c = va_arg (*va, sse2_qos_pol_cfg_params_st *);
+  qos_pol_cfg_params_st *c = va_arg (*va, qos_pol_cfg_params_st *);
 
-  if (c->rfc == SSE2_QOS_POLICER_TYPE_1R2C)
+  if (c->rfc == QOS_POLICER_TYPE_1R2C)
     s = format (s, "1r2c");
 
-  else if (c->rfc == SSE2_QOS_POLICER_TYPE_1R3C_RFC_2697)
+  else if (c->rfc == QOS_POLICER_TYPE_1R3C_RFC_2697)
     s = format (s, "1r3c");
 
-  else if (c->rfc == SSE2_QOS_POLICER_TYPE_2R3C_RFC_2698)
+  else if (c->rfc == QOS_POLICER_TYPE_2R3C_RFC_2698)
     s = format (s, "2r3c-2698");
 
-  else if (c->rfc == SSE2_QOS_POLICER_TYPE_2R3C_RFC_4115)
+  else if (c->rfc == QOS_POLICER_TYPE_2R3C_RFC_4115)
     s = format (s, "2r3c-4115");
 
-  else if (c->rfc == SSE2_QOS_POLICER_TYPE_2R3C_RFC_MEF5CF1)
+  else if (c->rfc == QOS_POLICER_TYPE_2R3C_RFC_MEF5CF1)
     s = format (s, "2r3c-mef5cf1");
   else
     s = format (s, "ILLEGAL");
@@ -226,14 +287,13 @@ format_policer_type (u8 * s, va_list * va)
 static u8 *
 format_policer_action_type (u8 * s, va_list * va)
 {
-  sse2_qos_pol_action_params_st *a
-    = va_arg (*va, sse2_qos_pol_action_params_st *);
+  qos_pol_action_params_st *a = va_arg (*va, qos_pol_action_params_st *);
 
-  if (a->action_type == SSE2_QOS_ACTION_DROP)
+  if (a->action_type == QOS_ACTION_DROP)
     s = format (s, "drop");
-  else if (a->action_type == SSE2_QOS_ACTION_TRANSMIT)
+  else if (a->action_type == QOS_ACTION_TRANSMIT)
     s = format (s, "transmit");
-  else if (a->action_type == SSE2_QOS_ACTION_MARK_AND_TRANSMIT)
+  else if (a->action_type == QOS_ACTION_MARK_AND_TRANSMIT)
     s = format (s, "mark-and-transmit %U", format_ip_dscp, a->dscp);
   else
     s = format (s, "ILLEGAL");
@@ -243,7 +303,7 @@ format_policer_action_type (u8 * s, va_list * va)
 u8 *
 format_policer_config (u8 * s, va_list * va)
 {
-  sse2_qos_pol_cfg_params_st *c = va_arg (*va, sse2_qos_pol_cfg_params_st *);
+  qos_pol_cfg_params_st *c = va_arg (*va, qos_pol_cfg_params_st *);
 
   s = format (s, "type %U cir %u eir %u cb %u eb %u\n",
 	      format_policer_type, c,
@@ -261,21 +321,21 @@ format_policer_config (u8 * s, va_list * va)
 static uword
 unformat_policer_type (unformat_input_t * input, va_list * va)
 {
-  sse2_qos_pol_cfg_params_st *c = va_arg (*va, sse2_qos_pol_cfg_params_st *);
+  qos_pol_cfg_params_st *c = va_arg (*va, qos_pol_cfg_params_st *);
 
   if (!unformat (input, "type"))
     return 0;
 
   if (unformat (input, "1r2c"))
-    c->rfc = SSE2_QOS_POLICER_TYPE_1R2C;
+    c->rfc = QOS_POLICER_TYPE_1R2C;
   else if (unformat (input, "1r3c"))
-    c->rfc = SSE2_QOS_POLICER_TYPE_1R3C_RFC_2697;
+    c->rfc = QOS_POLICER_TYPE_1R3C_RFC_2697;
   else if (unformat (input, "2r3c-2698"))
-    c->rfc = SSE2_QOS_POLICER_TYPE_2R3C_RFC_2698;
+    c->rfc = QOS_POLICER_TYPE_2R3C_RFC_2698;
   else if (unformat (input, "2r3c-4115"))
-    c->rfc = SSE2_QOS_POLICER_TYPE_2R3C_RFC_4115;
+    c->rfc = QOS_POLICER_TYPE_2R3C_RFC_4115;
   else if (unformat (input, "2r3c-mef5cf1"))
-    c->rfc = SSE2_QOS_POLICER_TYPE_2R3C_RFC_MEF5CF1;
+    c->rfc = QOS_POLICER_TYPE_2R3C_RFC_MEF5CF1;
   else
     return 0;
   return 1;
@@ -284,17 +344,17 @@ unformat_policer_type (unformat_input_t * input, va_list * va)
 static uword
 unformat_policer_round_type (unformat_input_t * input, va_list * va)
 {
-  sse2_qos_pol_cfg_params_st *c = va_arg (*va, sse2_qos_pol_cfg_params_st *);
+  qos_pol_cfg_params_st *c = va_arg (*va, qos_pol_cfg_params_st *);
 
   if (!unformat (input, "round"))
     return 0;
 
   if (unformat (input, "closest"))
-    c->rnd_type = SSE2_QOS_ROUND_TO_CLOSEST;
+    c->rnd_type = QOS_ROUND_TO_CLOSEST;
   else if (unformat (input, "up"))
-    c->rnd_type = SSE2_QOS_ROUND_TO_UP;
+    c->rnd_type = QOS_ROUND_TO_UP;
   else if (unformat (input, "down"))
-    c->rnd_type = SSE2_QOS_ROUND_TO_DOWN;
+    c->rnd_type = QOS_ROUND_TO_DOWN;
   else
     return 0;
   return 1;
@@ -303,15 +363,15 @@ unformat_policer_round_type (unformat_input_t * input, va_list * va)
 static uword
 unformat_policer_rate_type (unformat_input_t * input, va_list * va)
 {
-  sse2_qos_pol_cfg_params_st *c = va_arg (*va, sse2_qos_pol_cfg_params_st *);
+  qos_pol_cfg_params_st *c = va_arg (*va, qos_pol_cfg_params_st *);
 
   if (!unformat (input, "rate"))
     return 0;
 
   if (unformat (input, "kbps"))
-    c->rate_type = SSE2_QOS_RATE_KBPS;
+    c->rate_type = QOS_RATE_KBPS;
   else if (unformat (input, "pps"))
-    c->rate_type = SSE2_QOS_RATE_PPS;
+    c->rate_type = QOS_RATE_PPS;
   else
     return 0;
   return 1;
@@ -320,7 +380,7 @@ unformat_policer_rate_type (unformat_input_t * input, va_list * va)
 static uword
 unformat_policer_cir (unformat_input_t * input, va_list * va)
 {
-  sse2_qos_pol_cfg_params_st *c = va_arg (*va, sse2_qos_pol_cfg_params_st *);
+  qos_pol_cfg_params_st *c = va_arg (*va, qos_pol_cfg_params_st *);
 
   if (unformat (input, "cir %u", &c->rb.kbps.cir_kbps))
     return 1;
@@ -330,7 +390,7 @@ unformat_policer_cir (unformat_input_t * input, va_list * va)
 static uword
 unformat_policer_eir (unformat_input_t * input, va_list * va)
 {
-  sse2_qos_pol_cfg_params_st *c = va_arg (*va, sse2_qos_pol_cfg_params_st *);
+  qos_pol_cfg_params_st *c = va_arg (*va, qos_pol_cfg_params_st *);
 
   if (unformat (input, "eir %u", &c->rb.kbps.eir_kbps))
     return 1;
@@ -340,7 +400,7 @@ unformat_policer_eir (unformat_input_t * input, va_list * va)
 static uword
 unformat_policer_cb (unformat_input_t * input, va_list * va)
 {
-  sse2_qos_pol_cfg_params_st *c = va_arg (*va, sse2_qos_pol_cfg_params_st *);
+  qos_pol_cfg_params_st *c = va_arg (*va, qos_pol_cfg_params_st *);
 
   if (unformat (input, "cb %u", &c->rb.kbps.cb_bytes))
     return 1;
@@ -350,7 +410,7 @@ unformat_policer_cb (unformat_input_t * input, va_list * va)
 static uword
 unformat_policer_eb (unformat_input_t * input, va_list * va)
 {
-  sse2_qos_pol_cfg_params_st *c = va_arg (*va, sse2_qos_pol_cfg_params_st *);
+  qos_pol_cfg_params_st *c = va_arg (*va, qos_pol_cfg_params_st *);
 
   if (unformat (input, "eb %u", &c->rb.kbps.eb_bytes))
     return 1;
@@ -360,16 +420,15 @@ unformat_policer_eb (unformat_input_t * input, va_list * va)
 static uword
 unformat_policer_action_type (unformat_input_t * input, va_list * va)
 {
-  sse2_qos_pol_action_params_st *a
-    = va_arg (*va, sse2_qos_pol_action_params_st *);
+  qos_pol_action_params_st *a = va_arg (*va, qos_pol_action_params_st *);
 
   if (unformat (input, "drop"))
-    a->action_type = SSE2_QOS_ACTION_DROP;
+    a->action_type = QOS_ACTION_DROP;
   else if (unformat (input, "transmit"))
-    a->action_type = SSE2_QOS_ACTION_TRANSMIT;
+    a->action_type = QOS_ACTION_TRANSMIT;
   else if (unformat (input, "mark-and-transmit %U", unformat_ip_dscp,
 		     &a->dscp))
-    a->action_type = SSE2_QOS_ACTION_MARK_AND_TRANSMIT;
+    a->action_type = QOS_ACTION_MARK_AND_TRANSMIT;
   else
     return 0;
   return 1;
@@ -378,7 +437,7 @@ unformat_policer_action_type (unformat_input_t * input, va_list * va)
 static uword
 unformat_policer_action (unformat_input_t * input, va_list * va)
 {
-  sse2_qos_pol_cfg_params_st *c = va_arg (*va, sse2_qos_pol_cfg_params_st *);
+  qos_pol_cfg_params_st *c = va_arg (*va, qos_pol_cfg_params_st *);
 
   if (unformat (input, "conform-action %U", unformat_policer_action_type,
 		&c->conform_action))
@@ -441,11 +500,10 @@ _(type)                                         \
 _(action)
 
 static clib_error_t *
-configure_policer_command_fn (vlib_main_t * vm,
-			      unformat_input_t * input,
-			      vlib_cli_command_t * cmd)
+policer_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
+			vlib_cli_command_t *cmd)
 {
-  sse2_qos_pol_cfg_params_st c;
+  qos_pol_cfg_params_st c;
   unformat_input_t _line_input, *line_input = &_line_input;
   u8 is_add = 1;
   u8 *name = 0;
@@ -486,11 +544,168 @@ done:
   return error;
 }
 
+static clib_error_t *
+policer_del_command_fn (vlib_main_t *vm, unformat_input_t *input,
+			vlib_cli_command_t *cmd)
+{
+  unformat_input_t _line_input, *line_input = &_line_input;
+  clib_error_t *error = NULL;
+  u8 *name = 0;
+
+  /* Get a line of input. */
+  if (!unformat_user (input, unformat_line_input, line_input))
+    return 0;
+
+  while (unformat_check_input (line_input) != UNFORMAT_END_OF_INPUT)
+    {
+      if (unformat (line_input, "name %s", &name))
+	;
+      else
+	{
+	  error = clib_error_return (0, "unknown input `%U'",
+				     format_unformat_error, line_input);
+	  goto done;
+	}
+    }
+
+  error = policer_add_del (vm, name, NULL, NULL, 0);
+
+done:
+  unformat_free (line_input);
+
+  return error;
+}
+
+static clib_error_t *
+policer_bind_command_fn (vlib_main_t *vm, unformat_input_t *input,
+			 vlib_cli_command_t *cmd)
+{
+  unformat_input_t _line_input, *line_input = &_line_input;
+  clib_error_t *error = NULL;
+  u8 bind, *name = 0;
+  u32 worker;
+  int rv;
+
+  bind = 1;
+  worker = ~0;
+
+  /* Get a line of input. */
+  if (!unformat_user (input, unformat_line_input, line_input))
+    return 0;
+
+  while (unformat_check_input (line_input) != UNFORMAT_END_OF_INPUT)
+    {
+      if (unformat (line_input, "name %s", &name))
+	;
+      else if (unformat (line_input, "unapply"))
+	bind = 0;
+      else if (unformat (line_input, "%d", &bind))
+	;
+      else
+	{
+	  error = clib_error_return (0, "unknown input `%U'",
+				     format_unformat_error, line_input);
+	  goto done;
+	}
+    }
+
+  if (bind && ~0 == worker)
+    {
+      error = clib_error_return (0, "specify worker to bind to: `%U'",
+				 format_unformat_error, line_input);
+    }
+  else
+    {
+      rv = policer_bind_worker (name, worker, bind);
+
+      if (rv)
+	error = clib_error_return (0, "failed: `%d'", rv);
+    }
+
+done:
+  unformat_free (line_input);
+
+  return error;
+}
+
+static clib_error_t *
+policer_input_command_fn (vlib_main_t *vm, unformat_input_t *input,
+			  vlib_cli_command_t *cmd)
+{
+  unformat_input_t _line_input, *line_input = &_line_input;
+  clib_error_t *error = NULL;
+  u8 apply, *name = 0;
+  u32 sw_if_index;
+  int rv;
+
+  apply = 1;
+  sw_if_index = ~0;
+
+  /* Get a line of input. */
+  if (!unformat_user (input, unformat_line_input, line_input))
+    return 0;
+
+  while (unformat_check_input (line_input) != UNFORMAT_END_OF_INPUT)
+    {
+      if (unformat (line_input, "name %s", &name))
+	;
+      else if (unformat (line_input, "unapply"))
+	apply = 0;
+      else if (unformat (line_input, "%U", unformat_vnet_sw_interface,
+			 vnet_get_main (), &sw_if_index))
+	;
+      else
+	{
+	  error = clib_error_return (0, "unknown input `%U'",
+				     format_unformat_error, line_input);
+	  goto done;
+	}
+    }
+
+  if (~0 == sw_if_index)
+    {
+      error = clib_error_return (0, "specify interface to apply to: `%U'",
+				 format_unformat_error, line_input);
+    }
+  else
+    {
+      rv = policer_input (name, sw_if_index, apply);
+
+      if (rv)
+	error = clib_error_return (0, "failed: `%d'", rv);
+    }
+
+done:
+  unformat_free (line_input);
+
+  return error;
+}
+
 /* *INDENT-OFF* */
 VLIB_CLI_COMMAND (configure_policer_command, static) = {
-    .path = "configure policer",
-    .short_help = "configure policer name <name> <params> ",
-    .function = configure_policer_command_fn,
+  .path = "configure policer",
+  .short_help = "configure policer name <name> <params> ",
+  .function = policer_add_command_fn,
+};
+VLIB_CLI_COMMAND (policer_add_command, static) = {
+  .path = "policer add",
+  .short_help = "policer name <name> <params> ",
+  .function = policer_add_command_fn,
+};
+VLIB_CLI_COMMAND (policer_del_command, static) = {
+  .path = "policer del",
+  .short_help = "policer del name <name> ",
+  .function = policer_del_command_fn,
+};
+VLIB_CLI_COMMAND (policer_bind_command, static) = {
+  .path = "policer bind",
+  .short_help = "policer bind [unbind] name <name> <worker>",
+  .function = policer_bind_command_fn,
+};
+VLIB_CLI_COMMAND (policer_input_command, static) = {
+  .path = "policer input",
+  .short_help = "policer input [unapply] name <name> <interfac>",
+  .function = policer_input_command_fn,
 };
 /* *INDENT-ON* */
 
@@ -504,8 +719,8 @@ show_policer_command_fn (vlib_main_t * vm,
   u8 *match_name = 0;
   u8 *name;
   uword *pi;
-  sse2_qos_pol_cfg_params_st *config;
-  policer_read_response_type_st *templ;
+  qos_pol_cfg_params_st *config;
+  policer_t *templ;
 
   (void) unformat (input, "name %s", &match_name);
 
@@ -565,12 +780,11 @@ clib_error_t *
 policer_init (vlib_main_t * vm)
 {
   vnet_policer_main_t *pm = &vnet_policer_main;
-  void vnet_policer_node_funcs_reference (void);
-
-  vnet_policer_node_funcs_reference ();
 
   pm->vlib_main = vm;
   pm->vnet_main = vnet_get_main ();
+  pm->log_class = vlib_log_register_class ("policer", 0);
+  pm->fq_index = vlib_frame_queue_main_init (policer_input_node.index, 0);
 
   pm->policer_config_by_name = hash_create_string (0, sizeof (uword));
   pm->policer_index_by_name = hash_create_string (0, sizeof (uword));

@@ -225,6 +225,27 @@ vlib_node_get_state (vlib_main_t * vm, u32 node_index)
 }
 
 always_inline void
+vlib_node_set_flag (vlib_main_t *vm, u32 node_index, u16 flag, u8 enable)
+{
+  vlib_node_runtime_t *r;
+  vlib_node_t *n;
+
+  n = vlib_get_node (vm, node_index);
+  r = vlib_node_get_runtime (vm, node_index);
+
+  if (enable)
+    {
+      n->flags |= flag;
+      r->flags |= flag;
+    }
+  else
+    {
+      n->flags &= ~flag;
+      r->flags &= ~flag;
+    }
+}
+
+always_inline void
 vlib_node_set_interrupt_pending (vlib_main_t *vm, u32 node_index)
 {
   vlib_node_main_t *nm = &vm->node_main;
@@ -1189,6 +1210,9 @@ void vlib_node_rename (vlib_main_t * vm, u32 node_index, char *fmt, ...);
    macro. */
 u32 vlib_register_node (vlib_main_t * vm, vlib_node_registration_t * r);
 
+/* Register all node function variants */
+void vlib_register_all_node_march_variants (vlib_main_t *vm);
+
 /* Register all static nodes registered via VLIB_REGISTER_NODE. */
 void vlib_register_all_static_nodes (vlib_main_t * vm);
 
@@ -1197,6 +1221,12 @@ void vlib_start_process (vlib_main_t * vm, uword process_index);
 
 /* Sync up runtime and main node stats. */
 void vlib_node_sync_stats (vlib_main_t * vm, vlib_node_t * n);
+void vlib_node_runtime_sync_stats (vlib_main_t *vm, vlib_node_runtime_t *r,
+				   uword n_calls, uword n_vectors,
+				   uword n_clocks);
+void vlib_node_runtime_sync_stats_node (vlib_node_t *n, vlib_node_runtime_t *r,
+					uword n_calls, uword n_vectors,
+					uword n_clocks);
 
 /* Node graph initialization function. */
 clib_error_t *vlib_node_main_init (vlib_main_t * vm);
@@ -1238,6 +1268,13 @@ vlib_node_set_dispatch_wrapper (vlib_main_t *vm, vlib_node_function_t *fn)
   vm->dispatch_wrapper_fn = fn;
   return 0;
 }
+
+int vlib_node_set_march_variant (vlib_main_t *vm, u32 node_index,
+				 clib_march_variant_type_t march_variant);
+
+vlib_node_function_t *
+vlib_node_get_preferred_node_fn_variant (vlib_main_t *vm,
+					 vlib_node_fn_registration_t *regs);
 
 #endif /* included_vlib_node_funcs_h */
 

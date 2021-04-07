@@ -42,6 +42,14 @@
 #define ADJ_DBG(_e, _fmt, _args...)
 #endif
 
+/*
+ * Vlib nodes
+ */
+extern vlib_node_registration_t adj_nsh_midchain_node;
+extern vlib_node_registration_t adj_nsh_rewrite_node;
+extern vlib_node_registration_t adj_midchain_tx_no_count_node;
+extern vlib_node_registration_t adj_midchain_tx_node;
+
 static inline u32
 adj_get_rewrite_node (vnet_link_t linkt)
 {
@@ -126,6 +134,7 @@ extern void adj_mcast_remove(fib_protocol_t proto,
 extern void adj_midchain_teardown(ip_adjacency_t *adj);
 
 extern u32 adj_dpo_get_urpf(const dpo_id_t *dpo);
+extern u16 adj_dpo_get_mtu(const dpo_id_t *dpo);
 
 /*
  * Adj BFD

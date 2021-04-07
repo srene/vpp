@@ -20,7 +20,7 @@ FAILED_DIR=/tmp/vpp-failed-unittests/
 PLUGIN_TEST_DIRS=$(shell find $(PLUGIN_SRC_DIR) -type d -name test -exec echo -n " -d {}" \;)
 CORE_TEST_DIRS=$(shell find $(WS_ROOT)/src -not \( -path $(INTERN_PLUGIN_SRC_DIR) -prune \) -type d -name test -exec echo -n " -d {}" \;)
 VPP_TEST_DIRS=$(shell ls -d $(TEST_DIR)$(PLUGIN_TEST_DIRS)$(CORE_TEST_DIRS) $(EXTERN_TESTS))
-VPP_TEST_SRC=$(shell for dir in $(VPP_TEST_DIRS) ; do ls $$dir/*.py; done)
+VPP_TEST_SRC=$(shell for dir in $(VPP_TEST_DIRS) ; do ls $$dir/*.py 2>/dev/null; done)
 
 .PHONY: verify-no-running-vpp
 
@@ -98,6 +98,11 @@ else
 PYTHON_INTERP=$(PYTHON)
 endif
 
+empty:=
+space:= $(empty) $(empty)
+export PYTHONPATH=$(subst $(space),:,$(VPP_TEST_DIRS))
+export PYTHONPYCACHEPREFIX=$(TEST_BR)/pycache
+
 PYTHON_VERSION=$(shell $(PYTHON_INTERP) -c 'import sys; print(sys.version_info.major)')
 PIP_VERSION=20.1.1
 # Keep in sync with requirements.txt
@@ -119,7 +124,7 @@ PAPI_WIPE_DIST=$(WS_ROOT)/src/vpp-api/vapi/__pycache__ \
 $(PIP_TOOLS_INSTALL_DONE):
 	@rm -rf $(VENV_PATH)
 	@mkdir -p $(VENV_RUN_DIR)
-	@virtualenv $(VENV_PATH) -p $(PYTHON_INTERP)
+	@$(PYTHON_INTERP) -m venv $(VENV_PATH)
 	# pip version pinning
 	@bash -c "source $(VENV_PATH)/bin/activate && \
 		  $(PYTHON_INTERP) -m pip install pip===$(PIP_VERSION)"
@@ -177,7 +182,7 @@ SANITY_IMPORT_VPP_PAPI_CMD=true
 SANITY_RUN_VPP_CMD=true
 else
 SANITY_IMPORT_VPP_PAPI_CMD=source $(VENV_PATH)/bin/activate && $(PYTHON_INTERP) $(BUILD_TEST_SRC)/sanity_import_vpp_papi.py
-SANITY_RUN_VPP_CMD=source $(VENV_PATH)/bin/activate && PYTHONPATH=$(BUILD_TEST_SRC) $(PYTHON_INTERP) $(BUILD_TEST_SRC)/sanity_run_vpp.py
+SANITY_RUN_VPP_CMD=source $(VENV_PATH)/bin/activate && $(PYTHON_INTERP) $(BUILD_TEST_SRC)/sanity_run_vpp.py
 endif
 
 ifndef TEST_JOBS
@@ -193,7 +198,6 @@ PARALLEL_ILLEGAL=1
 endif
 
 sanity: test-dep verify-no-running-vpp
-	@sys_req/dev_shm_size.sh
 	@bash -c "test $(PARALLEL_ILLEGAL) -eq 0 ||\
 	    (echo \"*******************************************************************\" &&\
 		 echo \"* Sanity check failed, TEST_JOBS is not 1 or 'auto' and DEBUG, STEP or PROFILE is set\" &&\
@@ -218,6 +222,7 @@ ext-test-apps:
 	make -C ext test-apps
 
 $(BUILD_TEST_SRC): verify-env
+	@rm -rf $@
 	@mkdir -p $@
 	@for file in $(VPP_TEST_SRC); do if [ ! -L $$file ] && [ ! -e $(BUILD_TEST_SRC)/$$(basename $$file) ] ; then ln -s $$file $(BUILD_TEST_SRC) ; fi ; done
 
@@ -239,10 +244,10 @@ retest: verify-env sanity $(FAILED_DIR)
 shell: test-dep
 	@echo "source $(VENV_PATH)/bin/activate;\
 		cd $(BUILD_TEST_SRC);\
-		export PYTHONPATH=$(BUILD_TEST_SRC);\
+		export PYTHONPATH=$(PYTHONPATH);\
 		export RND_SEED=$(RND_SEED);\
 		echo '***';\
-		echo PYTHONPATH=$(BUILD_TEST_SRC);\
+		echo PYTHONPATH=$(PYTHONPATH);\
 		echo RND_SEED=$(RND_SEED);\
 		echo VPP_BUILD_DIR=$(VPP_BUILD_DIR);\
 		echo VPP_BIN=$(VPP_BIN);\
@@ -313,6 +318,21 @@ wipe-papi:
 wipe-all: wipe wipe-papi wipe-doc wipe-cov
 	@rm -rf $(TEST_BR)
 
+.PHONY: checkstyle-diff
+checkstyle-diff: $(BUILD_TEST_SRC) $(PIP_INSTALL_DONE)
+	@bash -c "source $(VENV_PATH)/bin/activate &&\
+		  $(PYTHON_INTERP) -m pip install pycodestyle"
+	@bash -c "source $(VENV_PATH)/bin/activate &&\
+		cd $(WS_ROOT) && git diff --name-only --no-color --relative HEAD~1 ':!*.patch' | grep '.py$$' | xargs -n 1 -I XXX \
+		pycodestyle --show-source --ignore=W504,E126,E241,E226,E305,E704,E741,E722 -v XXX ||\
+		(echo \"*********************************************************************\" &&\
+		 echo \"* Test framework PEP8 compliance check FAILED (checked changed files)\" &&\
+	         echo \"*********************************************************************\" &&\
+		 false)"
+	@echo "*********************************************************************"
+	@echo "* Test framework PEP8 compliance check passed (checked changed files)"
+	@echo "*********************************************************************"
+
 .PHONY: checkstyle
 checkstyle: $(BUILD_TEST_SRC) $(PIP_INSTALL_DONE)
 	@bash -c "source $(VENV_PATH)/bin/activate &&\
@@ -320,11 +340,11 @@ checkstyle: $(BUILD_TEST_SRC) $(PIP_INSTALL_DONE)
 	@bash -c "source $(VENV_PATH)/bin/activate &&\
 		pycodestyle --show-source --ignore=W504,E126,E241,E226,E305,E704,E741,E722 -v $(BUILD_TEST_SRC)/*.py ||\
 		(echo \"*******************************************************************\" &&\
-		 echo \"* Test framework PEP8 compliance check FAILED \" &&\
+		 echo \"* Test framework PEP8 compliance check FAILED (checked all files)\" &&\
 	         echo \"*******************************************************************\" &&\
 		 false)"
 	@echo "*******************************************************************"
-	@echo "* Test framework PEP8 compliance check passed"
+	@echo "* Test framework PEP8 compliance check passed (checked all files)"
 	@echo "*******************************************************************"
 
 .PHONY: help
@@ -400,8 +420,6 @@ help:
 	@echo " TEST_DEBUG=1           - turn on debugging of the test framework itself (expert)"
 	@echo ""
 	@echo " SKIP_AARCH64=1         - skip tests that are failing on the ARM platorm in FD.io CI"
-	@echo ""
-	@echo " SOCKET=1               - Communicate with VPP over Unix domain socket instead of SHM"
 	@echo ""
 	@echo " RND_SEED=seed          - Seed RND with given seed"
 	@echo ""

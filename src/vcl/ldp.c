@@ -1952,8 +1952,14 @@ getsockopt (int fd, int level, int optname,
 	    case SO_REUSEADDR:
 	      rv = vls_attr (vlsh, VPPCOM_ATTR_GET_REUSEADDR, optval, optlen);
 	      break;
+	    case SO_REUSEPORT:
+	      rv = vls_attr (vlsh, VPPCOM_ATTR_GET_REUSEPORT, optval, optlen);
+	      break;
 	    case SO_BROADCAST:
 	      rv = vls_attr (vlsh, VPPCOM_ATTR_GET_BROADCAST, optval, optlen);
+	      break;
+	    case SO_DOMAIN:
+	      rv = vls_attr (vlsh, VPPCOM_ATTR_GET_DOMAIN, optval, optlen);
 	      break;
 	    case SO_ERROR:
 	      rv = vls_attr (vlsh, VPPCOM_ATTR_GET_ERROR, optval, optlen);
@@ -2052,6 +2058,10 @@ setsockopt (int fd, int level, int optname,
 	    case SO_REUSEADDR:
 	      rv = vls_attr (vlsh, VPPCOM_ATTR_SET_REUSEADDR,
 			     (void *) optval, &optlen);
+	      break;
+	    case SO_REUSEPORT:
+	      rv = vls_attr (vlsh, VPPCOM_ATTR_SET_REUSEPORT, (void *) optval,
+			     &optlen);
 	      break;
 	    case SO_BROADCAST:
 	      rv = vls_attr (vlsh, VPPCOM_ATTR_SET_BROADCAST,
@@ -2506,7 +2516,8 @@ ldp_epoll_pwait_eventfd (int epfd, struct epoll_event *events,
       ldpw->mq_epfd_added = 1;
     }
 
-  rv = vls_epoll_wait (ep_vlsh, events, maxevents, 0);
+  /* Request to only drain unhandled to prevent libc_epoll_wait starved */
+  rv = vls_epoll_wait (ep_vlsh, events, maxevents, -2);
   if (rv > 0)
     goto done;
   else if (PREDICT_FALSE (rv < 0))

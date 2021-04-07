@@ -480,9 +480,9 @@ unformat_policer_rate_type (unformat_input_t * input, va_list * args)
   u8 *r = va_arg (*args, u8 *);
 
   if (unformat (input, "kbps"))
-    *r = SSE2_QOS_RATE_KBPS;
+    *r = QOS_RATE_KBPS;
   else if (unformat (input, "pps"))
-    *r = SSE2_QOS_RATE_PPS;
+    *r = QOS_RATE_PPS;
   else
     return 0;
   return 1;
@@ -494,11 +494,11 @@ unformat_policer_round_type (unformat_input_t * input, va_list * args)
   u8 *r = va_arg (*args, u8 *);
 
   if (unformat (input, "closest"))
-    *r = SSE2_QOS_ROUND_TO_CLOSEST;
+    *r = QOS_ROUND_TO_CLOSEST;
   else if (unformat (input, "up"))
-    *r = SSE2_QOS_ROUND_TO_UP;
+    *r = QOS_ROUND_TO_UP;
   else if (unformat (input, "down"))
-    *r = SSE2_QOS_ROUND_TO_DOWN;
+    *r = QOS_ROUND_TO_DOWN;
   else
     return 0;
   return 1;
@@ -510,15 +510,15 @@ unformat_policer_type (unformat_input_t * input, va_list * args)
   u8 *r = va_arg (*args, u8 *);
 
   if (unformat (input, "1r2c"))
-    *r = SSE2_QOS_POLICER_TYPE_1R2C;
+    *r = QOS_POLICER_TYPE_1R2C;
   else if (unformat (input, "1r3c"))
-    *r = SSE2_QOS_POLICER_TYPE_1R3C_RFC_2697;
+    *r = QOS_POLICER_TYPE_1R3C_RFC_2697;
   else if (unformat (input, "2r3c-2698"))
-    *r = SSE2_QOS_POLICER_TYPE_2R3C_RFC_2698;
+    *r = QOS_POLICER_TYPE_2R3C_RFC_2698;
   else if (unformat (input, "2r3c-4115"))
-    *r = SSE2_QOS_POLICER_TYPE_2R3C_RFC_4115;
+    *r = QOS_POLICER_TYPE_2R3C_RFC_4115;
   else if (unformat (input, "2r3c-mef5cf1"))
-    *r = SSE2_QOS_POLICER_TYPE_2R3C_RFC_MEF5CF1;
+    *r = QOS_POLICER_TYPE_2R3C_RFC_MEF5CF1;
   else
     return 0;
   return 1;
@@ -540,15 +540,14 @@ unformat_dscp (unformat_input_t * input, va_list * va)
 static uword
 unformat_policer_action_type (unformat_input_t * input, va_list * va)
 {
-  sse2_qos_pol_action_params_st *a
-    = va_arg (*va, sse2_qos_pol_action_params_st *);
+  qos_pol_action_params_st *a = va_arg (*va, qos_pol_action_params_st *);
 
   if (unformat (input, "drop"))
-    a->action_type = SSE2_QOS_ACTION_DROP;
+    a->action_type = QOS_ACTION_DROP;
   else if (unformat (input, "transmit"))
-    a->action_type = SSE2_QOS_ACTION_TRANSMIT;
+    a->action_type = QOS_ACTION_TRANSMIT;
   else if (unformat (input, "mark-and-transmit %U", unformat_dscp, &a->dscp))
-    a->action_type = SSE2_QOS_ACTION_MARK_AND_TRANSMIT;
+    a->action_type = QOS_ACTION_MARK_AND_TRANSMIT;
   else
     return 0;
   return 1;
@@ -2681,15 +2680,15 @@ format_policer_type (u8 * s, va_list * va)
 {
   u32 i = va_arg (*va, u32);
 
-  if (i == SSE2_QOS_POLICER_TYPE_1R2C)
+  if (i == QOS_POLICER_TYPE_1R2C)
     s = format (s, "1r2c");
-  else if (i == SSE2_QOS_POLICER_TYPE_1R3C_RFC_2697)
+  else if (i == QOS_POLICER_TYPE_1R3C_RFC_2697)
     s = format (s, "1r3c");
-  else if (i == SSE2_QOS_POLICER_TYPE_2R3C_RFC_2698)
+  else if (i == QOS_POLICER_TYPE_2R3C_RFC_2698)
     s = format (s, "2r3c-2698");
-  else if (i == SSE2_QOS_POLICER_TYPE_2R3C_RFC_4115)
+  else if (i == QOS_POLICER_TYPE_2R3C_RFC_4115)
     s = format (s, "2r3c-4115");
-  else if (i == SSE2_QOS_POLICER_TYPE_2R3C_RFC_MEF5CF1)
+  else if (i == QOS_POLICER_TYPE_2R3C_RFC_MEF5CF1)
     s = format (s, "2r3c-mef5cf1");
   else
     s = format (s, "ILLEGAL");
@@ -2701,9 +2700,9 @@ format_policer_rate_type (u8 * s, va_list * va)
 {
   u32 i = va_arg (*va, u32);
 
-  if (i == SSE2_QOS_RATE_KBPS)
+  if (i == QOS_RATE_KBPS)
     s = format (s, "kbps");
-  else if (i == SSE2_QOS_RATE_PPS)
+  else if (i == QOS_RATE_PPS)
     s = format (s, "pps");
   else
     s = format (s, "ILLEGAL");
@@ -2715,11 +2714,11 @@ format_policer_round_type (u8 * s, va_list * va)
 {
   u32 i = va_arg (*va, u32);
 
-  if (i == SSE2_QOS_ROUND_TO_CLOSEST)
+  if (i == QOS_ROUND_TO_CLOSEST)
     s = format (s, "closest");
-  else if (i == SSE2_QOS_ROUND_TO_UP)
+  else if (i == QOS_ROUND_TO_UP)
     s = format (s, "up");
-  else if (i == SSE2_QOS_ROUND_TO_DOWN)
+  else if (i == QOS_ROUND_TO_DOWN)
     s = format (s, "down");
   else
     s = format (s, "ILLEGAL");
@@ -2731,11 +2730,11 @@ format_policer_action_type (u8 * s, va_list * va)
 {
   u32 i = va_arg (*va, u32);
 
-  if (i == SSE2_QOS_ACTION_DROP)
+  if (i == QOS_ACTION_DROP)
     s = format (s, "drop");
-  else if (i == SSE2_QOS_ACTION_TRANSMIT)
+  else if (i == QOS_ACTION_TRANSMIT)
     s = format (s, "transmit");
-  else if (i == SSE2_QOS_ACTION_MARK_AND_TRANSMIT)
+  else if (i == QOS_ACTION_MARK_AND_TRANSMIT)
     s = format (s, "mark-and-transmit");
   else
     s = format (s, "ILLEGAL");
@@ -3295,8 +3294,6 @@ _(delete_loopback_reply)                                \
 _(bd_ip_mac_add_del_reply)                              \
 _(bd_ip_mac_flush_reply)                                \
 _(want_interface_events_reply)                          \
-_(cop_interface_enable_disable_reply)			\
-_(cop_whitelist_enable_disable_reply)                   \
 _(sw_interface_clear_stats_reply)                       \
 _(ioam_enable_reply)                                    \
 _(ioam_disable_reply)                                   \
@@ -3480,8 +3477,6 @@ _(BD_IP_MAC_FLUSH_REPLY, bd_ip_mac_flush_reply)                         \
 _(BD_IP_MAC_DETAILS, bd_ip_mac_details)                                 \
 _(WANT_INTERFACE_EVENTS_REPLY, want_interface_events_reply)             \
 _(GET_FIRST_MSG_ID_REPLY, get_first_msg_id_reply)    			\
-_(COP_INTERFACE_ENABLE_DISABLE_REPLY, cop_interface_enable_disable_reply) \
-_(COP_WHITELIST_ENABLE_DISABLE_REPLY, cop_whitelist_enable_disable_reply) \
 _(GET_NODE_GRAPH_REPLY, get_node_graph_reply)                           \
 _(SW_INTERFACE_CLEAR_STATS_REPLY, sw_interface_clear_stats_reply)      \
 _(IOAM_ENABLE_REPLY, ioam_enable_reply)                   \
@@ -11322,98 +11317,6 @@ api_get_first_msg_id (vat_main_t * vam)
 }
 
 static int
-api_cop_interface_enable_disable (vat_main_t * vam)
-{
-  unformat_input_t *line_input = vam->input;
-  vl_api_cop_interface_enable_disable_t *mp;
-  u32 sw_if_index = ~0;
-  u8 enable_disable = 1;
-  int ret;
-
-  while (unformat_check_input (line_input) != UNFORMAT_END_OF_INPUT)
-    {
-      if (unformat (line_input, "disable"))
-	enable_disable = 0;
-      if (unformat (line_input, "enable"))
-	enable_disable = 1;
-      else if (unformat (line_input, "%U", api_unformat_sw_if_index,
-			 vam, &sw_if_index))
-	;
-      else if (unformat (line_input, "sw_if_index %d", &sw_if_index))
-	;
-      else
-	break;
-    }
-
-  if (sw_if_index == ~0)
-    {
-      errmsg ("missing interface name or sw_if_index");
-      return -99;
-    }
-
-  /* Construct the API message */
-  M (COP_INTERFACE_ENABLE_DISABLE, mp);
-  mp->sw_if_index = ntohl (sw_if_index);
-  mp->enable_disable = enable_disable;
-
-  /* send it... */
-  S (mp);
-  /* Wait for the reply */
-  W (ret);
-  return ret;
-}
-
-static int
-api_cop_whitelist_enable_disable (vat_main_t * vam)
-{
-  unformat_input_t *line_input = vam->input;
-  vl_api_cop_whitelist_enable_disable_t *mp;
-  u32 sw_if_index = ~0;
-  u8 ip4 = 0, ip6 = 0, default_cop = 0;
-  u32 fib_id = 0;
-  int ret;
-
-  while (unformat_check_input (line_input) != UNFORMAT_END_OF_INPUT)
-    {
-      if (unformat (line_input, "ip4"))
-	ip4 = 1;
-      else if (unformat (line_input, "ip6"))
-	ip6 = 1;
-      else if (unformat (line_input, "default"))
-	default_cop = 1;
-      else if (unformat (line_input, "%U", api_unformat_sw_if_index,
-			 vam, &sw_if_index))
-	;
-      else if (unformat (line_input, "sw_if_index %d", &sw_if_index))
-	;
-      else if (unformat (line_input, "fib-id %d", &fib_id))
-	;
-      else
-	break;
-    }
-
-  if (sw_if_index == ~0)
-    {
-      errmsg ("missing interface name or sw_if_index");
-      return -99;
-    }
-
-  /* Construct the API message */
-  M (COP_WHITELIST_ENABLE_DISABLE, mp);
-  mp->sw_if_index = ntohl (sw_if_index);
-  mp->fib_id = ntohl (fib_id);
-  mp->ip4 = ip4;
-  mp->ip6 = ip6;
-  mp->default_cop = default_cop;
-
-  /* send it... */
-  S (mp);
-  /* Wait for the reply */
-  W (ret);
-  return ret;
-}
-
-static int
 api_get_node_graph (vat_main_t * vam)
 {
   vl_api_get_node_graph_t *mp;
@@ -11582,14 +11485,14 @@ api_policer_add_del (vat_main_t * vam)
   u8 round_type = 0;
   u8 type = 0;
   u8 color_aware = 0;
-  sse2_qos_pol_action_params_st conform_action, exceed_action, violate_action;
+  qos_pol_action_params_st conform_action, exceed_action, violate_action;
   int ret;
 
-  conform_action.action_type = SSE2_QOS_ACTION_TRANSMIT;
+  conform_action.action_type = QOS_ACTION_TRANSMIT;
   conform_action.dscp = 0;
-  exceed_action.action_type = SSE2_QOS_ACTION_MARK_AND_TRANSMIT;
+  exceed_action.action_type = QOS_ACTION_MARK_AND_TRANSMIT;
   exceed_action.dscp = 0;
-  violate_action.action_type = SSE2_QOS_ACTION_DROP;
+  violate_action.action_type = QOS_ACTION_DROP;
   violate_action.dscp = 0;
 
   while (unformat_check_input (i) != UNFORMAT_END_OF_INPUT)
@@ -11653,11 +11556,14 @@ api_policer_add_del (vat_main_t * vam)
   mp->rate_type = rate_type;
   mp->round_type = round_type;
   mp->type = type;
-  mp->conform_action.type = conform_action.action_type;
+  mp->conform_action.type =
+    (vl_api_sse2_qos_action_type_t) conform_action.action_type;
   mp->conform_action.dscp = conform_action.dscp;
-  mp->exceed_action.type = exceed_action.action_type;
+  mp->exceed_action.type =
+    (vl_api_sse2_qos_action_type_t) exceed_action.action_type;
   mp->exceed_action.dscp = exceed_action.dscp;
-  mp->violate_action.type = violate_action.action_type;
+  mp->violate_action.type =
+    (vl_api_sse2_qos_action_type_t) violate_action.action_type;
   mp->violate_action.dscp = violate_action.dscp;
   mp->color_aware = color_aware;
 
@@ -15020,9 +14926,6 @@ _(bd_ip_mac_flush, "bd_id <bridge-domain-id>")                          \
 _(bd_ip_mac_dump, "[bd_id] <bridge-domain-id>")                         \
 _(want_interface_events,  "enable|disable")                             \
 _(get_first_msg_id, "client <name>")					\
-_(cop_interface_enable_disable, "<intfc> | sw_if_index <nn> [disable]") \
-_(cop_whitelist_enable_disable, "<intfc> | sw_if_index <nn>\n"		\
-  "fib-id <nn> [ip4][ip6][default]")					\
 _(get_node_graph, " ")                                                  \
 _(sw_interface_clear_stats,"<intfc> | sw_if_index <nn>")                \
 _(ioam_enable, "[trace] [pow] [ppc <encap|decap>]")                     \

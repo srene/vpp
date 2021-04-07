@@ -23,7 +23,7 @@ class VppTransport:
 
     def __init__(self, parent, read_timeout, server_address):
         self.connected = False
-        self.read_timeout = read_timeout if read_timeout > 0 else 1
+        self.read_timeout = read_timeout if read_timeout > 0 else None
         self.parent = parent
         self.server_address = server_address
         self.header = struct.Struct('>QII')
@@ -90,8 +90,8 @@ class VppTransport:
         try:
             self.socket.connect(self.server_address)
         except socket.error as msg:
-            logging.error("{} on socket {}".format(msg, self.server_address))
-            raise
+            # logging.error("{} on socket {}".format(msg, self.server_address))
+            raise msg
 
         self.connected = True
 

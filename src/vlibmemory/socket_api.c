@@ -204,6 +204,42 @@ vl_socket_process_api_msg (vl_api_registration_t * rp, i8 * input_v)
   socket_main.current_rp = 0;
 }
 
+int
+is_being_removed_reg_index (u32 reg_index)
+{
+  vl_api_registration_t *rp = vl_socket_get_registration (reg_index);
+  ALWAYS_ASSERT (rp != 0);
+  return (rp->is_being_removed);
+}
+
+static void
+socket_cleanup_pending_remove_registration_cb (u32 *preg_index)
+{
+  vl_api_registration_t *rp = vl_socket_get_registration (*preg_index);
+  clib_file_main_t *fm = &file_main;
+  u32 pending_remove_file_index = vl_api_registration_file_index (rp);
+
+  clib_file_t *zf = fm->file_pool + pending_remove_file_index;
+
+  clib_file_del (fm, zf);
+  vl_socket_free_registration_index (rp - socket_main.registration_pool);
+}
+
+static void
+vl_socket_request_remove_reg_index (u32 reg_index)
+{
+  vl_api_registration_t *rp = vl_socket_get_registration (reg_index);
+  ALWAYS_ASSERT (rp != 0);
+  if (rp->is_being_removed)
+    {
+      return;
+    }
+  rp->is_being_removed = 1;
+  vl_api_force_rpc_call_main_thread (
+    socket_cleanup_pending_remove_registration_cb, (void *) &reg_index,
+    sizeof (u32));
+}
+
 /*
  * Read function for API socket.
  *
@@ -223,7 +259,6 @@ vl_socket_process_api_msg (vl_api_registration_t * rp, i8 * input_v)
 clib_error_t *
 vl_socket_read_ready (clib_file_t * uf)
 {
-  clib_file_main_t *fm = &file_main;
   vlib_main_t *vm = vlib_get_main ();
   vl_api_registration_t *rp;
   /* n is the size of data read to input_buffer */
@@ -237,6 +272,10 @@ vl_socket_read_ready (clib_file_t * uf)
   u32 save_input_buffer_length = vec_len (socket_main.input_buffer);
   vl_socket_args_for_process_t *a;
   u32 reg_index = uf->private_data;
+  if (is_being_removed_reg_index (reg_index))
+    {
+      return 0;
+    }
 
   rp = vl_socket_get_registration (reg_index);
 
@@ -249,8 +288,7 @@ vl_socket_read_ready (clib_file_t * uf)
       if (errno != EAGAIN)
 	{
 	  /* Severe error, close the file. */
-	  clib_file_del (fm, uf);
-	  vl_socket_free_registration_index (reg_index);
+	  vl_socket_request_remove_reg_index (reg_index);
 	}
       /* EAGAIN means we do not close the file, but no data to process anyway. */
       return 0;
@@ -345,7 +383,13 @@ vl_socket_write_ready (clib_file_t * uf)
   vl_api_registration_t *rp;
   int n;
 
-  rp = pool_elt_at_index (socket_main.registration_pool, uf->private_data);
+  u32 reg_index = uf->private_data;
+  if (is_being_removed_reg_index (reg_index))
+    {
+      return 0;
+    }
+
+  rp = pool_elt_at_index (socket_main.registration_pool, reg_index);
 
   /* Flush output vector. */
   size_t total_bytes = vec_len (rp->output_vector);
@@ -364,9 +408,7 @@ vl_socket_write_ready (clib_file_t * uf)
 #if DEBUG > 2
 	  clib_warning ("write error, close the file...\n");
 #endif
-	  clib_file_del (fm, uf);
-	  vl_socket_free_registration_index (rp -
-					     socket_main.registration_pool);
+	  vl_socket_request_remove_reg_index (reg_index);
 	  return 0;
 	}
       remaining_bytes -= bytes_to_send;
@@ -387,13 +429,8 @@ vl_socket_write_ready (clib_file_t * uf)
 clib_error_t *
 vl_socket_error_ready (clib_file_t * uf)
 {
-  vl_api_registration_t *rp;
-  clib_file_main_t *fm = &file_main;
-
-  rp = pool_elt_at_index (socket_main.registration_pool, uf->private_data);
-  clib_file_del (fm, uf);
-  vl_socket_free_registration_index (rp - socket_main.registration_pool);
-
+  u32 reg_index = uf->private_data;
+  vl_socket_request_remove_reg_index (reg_index);
   return 0;
 }
 
@@ -629,8 +666,8 @@ vl_api_sock_init_shm_t_handler (vl_api_sock_init_shm_t * mp)
     }
   if (regp->registration_type != REGISTRATION_TYPE_SOCKET_SERVER)
     {
-      rv = -31;			/* VNET_API_ERROR_INVALID_REGISTRATION */
-      goto reply;
+      clib_warning ("Invalid registration");
+      return;
     }
 
   /*
@@ -704,6 +741,11 @@ reply:
 
   /* Send the magic "here's your sign (aka fd)" socket message */
   cf = vl_api_registration_file (regp);
+  if (!cf)
+    {
+      clib_warning ("cf removed");
+      return;
+    }
 
   /* Wait for reply to be consumed before sending the fd */
   while (tries-- > 0)

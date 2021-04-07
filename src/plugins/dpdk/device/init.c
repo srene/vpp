@@ -30,6 +30,7 @@
 #include <vlib/vmbus/vmbus.h>
 
 #include <rte_ring.h>
+#include <rte_vect.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -291,8 +292,8 @@ dpdk_lib_init (dpdk_main_t * dm)
 	  if (unformat (&input_vmbus, "%U", unformat_vlib_vmbus_addr,
 			&vmbus_addr))
 	    {
-	      p = hash_get (dm->conf->device_config_index_by_vmbus_addr,
-			    vmbus_addr.as_u32[0]);
+	      p = mhash_get (&dm->conf->device_config_index_by_vmbus_addr,
+			     &vmbus_addr);
 	    }
 	}
 
@@ -447,10 +448,11 @@ dpdk_lib_init (dpdk_main_t * dm)
 	  switch (xd->pmd)
 	    {
 	      /* Drivers with valid speed_capa set */
+	    case VNET_DPDK_PMD_I40E:
+	      xd->flags |= DPDK_DEVICE_FLAG_INT_UNMASKABLE;
 	    case VNET_DPDK_PMD_E1000EM:
 	    case VNET_DPDK_PMD_IGB:
 	    case VNET_DPDK_PMD_IXGBE:
-	    case VNET_DPDK_PMD_I40E:
 	    case VNET_DPDK_PMD_ICE:
 	      xd->port_type = port_type_from_speed_capa (&dev_info);
 	      xd->supported_flow_actions = VNET_FLOW_ACTION_MARK |
@@ -469,7 +471,7 @@ dpdk_lib_init (dpdk_main_t * dm)
 		    DPDK_DEVICE_FLAG_INTEL_PHDR_CKSUM;
 		}
 
-
+	      xd->port_conf.intr_conf.rxq = 1;
 	      break;
 	    case VNET_DPDK_PMD_CXGBE:
 	    case VNET_DPDK_PMD_MLX4:
@@ -480,9 +482,10 @@ dpdk_lib_init (dpdk_main_t * dm)
 	      break;
 
 	      /* SR-IOV VFs */
+	    case VNET_DPDK_PMD_I40EVF:
+	      xd->flags |= DPDK_DEVICE_FLAG_INT_UNMASKABLE;
 	    case VNET_DPDK_PMD_IGBVF:
 	    case VNET_DPDK_PMD_IXGBEVF:
-	    case VNET_DPDK_PMD_I40EVF:
 	      xd->port_type = VNET_DPDK_PORT_TYPE_ETH_VF;
 	      if (dm->conf->no_tx_checksum_offload == 0)
 		{
@@ -492,11 +495,14 @@ dpdk_lib_init (dpdk_main_t * dm)
 		    DPDK_DEVICE_FLAG_TX_OFFLOAD |
 		    DPDK_DEVICE_FLAG_INTEL_PHDR_CKSUM;
 		}
+	      /* sDPDK bug in multiqueue... */
+	      /* xd->port_conf.intr_conf.rxq = 1; */
 	      break;
 
 	      /* iAVF */
 	    case VNET_DPDK_PMD_IAVF:
-        xd->port_type = VNET_DPDK_PORT_TYPE_ETH_VF;
+	      xd->flags |= DPDK_DEVICE_FLAG_INT_UNMASKABLE;
+	      xd->port_type = VNET_DPDK_PORT_TYPE_ETH_VF;
 	      xd->supported_flow_actions = VNET_FLOW_ACTION_MARK |
 		VNET_FLOW_ACTION_REDIRECT_TO_NODE |
 		VNET_FLOW_ACTION_REDIRECT_TO_QUEUE |
@@ -511,7 +517,8 @@ dpdk_lib_init (dpdk_main_t * dm)
 		    DPDK_DEVICE_FLAG_TX_OFFLOAD |
 		    DPDK_DEVICE_FLAG_INTEL_PHDR_CKSUM;
 		}
-              break;
+	      xd->port_conf.intr_conf.rxq = 1;
+	      break;
 
 	    case VNET_DPDK_PMD_THUNDERX:
 	      xd->port_type = VNET_DPDK_PORT_TYPE_ETH_VF;
@@ -527,6 +534,7 @@ dpdk_lib_init (dpdk_main_t * dm)
 	    case VNET_DPDK_PMD_ENA:
 	      xd->port_type = VNET_DPDK_PORT_TYPE_ETH_VF;
 	      xd->port_conf.rxmode.offloads &= ~DEV_RX_OFFLOAD_SCATTER;
+	      xd->port_conf.intr_conf.rxq = 1;
 	      break;
 
 	    case VNET_DPDK_PMD_DPAA2:
@@ -765,24 +773,28 @@ dpdk_lib_init (dpdk_main_t * dm)
 
 	  /* Indicate ability to support L3 DMAC filtering and
 	   * initialize interface to L3 non-promisc mode */
-	  hi->flags |= VNET_HW_INTERFACE_FLAG_SUPPORTS_MAC_FILTER;
+	  hi->caps |= VNET_HW_INTERFACE_CAP_SUPPORTS_MAC_FILTER;
 	  ethernet_set_flags (dm->vnet_main, xd->hw_if_index,
 			     ETHERNET_INTERFACE_FLAG_DEFAULT_L3);
 	}
 
       if (dm->conf->no_tx_checksum_offload == 0)
 	if (xd->flags & DPDK_DEVICE_FLAG_TX_OFFLOAD && hi != NULL)
-	  hi->flags |= VNET_HW_INTERFACE_FLAG_SUPPORTS_TX_L4_CKSUM_OFFLOAD;
-
+	  {
+	    hi->caps |= VNET_HW_INTERFACE_CAP_SUPPORTS_TX_IP4_CKSUM |
+			VNET_HW_INTERFACE_CAP_SUPPORTS_TX_TCP_CKSUM |
+			VNET_HW_INTERFACE_CAP_SUPPORTS_TX_UDP_CKSUM;
+	  }
       if (devconf->tso == DPDK_DEVICE_TSO_ON && hi != NULL)
 	{
 	  /*tcp_udp checksum must be enabled*/
 	  if ((dm->conf->enable_tcp_udp_checksum) &&
-	      (hi->flags & VNET_HW_INTERFACE_FLAG_SUPPORTS_TX_L4_CKSUM_OFFLOAD))
+	      (hi->caps & VNET_HW_INTERFACE_CAP_SUPPORTS_TX_CKSUM))
 	    {
-		hi->flags |= VNET_HW_INTERFACE_FLAG_SUPPORTS_GSO;
-		xd->port_conf.txmode.offloads |= DEV_TX_OFFLOAD_TCP_TSO |
-		  DEV_TX_OFFLOAD_UDP_TSO;
+	      hi->caps |= VNET_HW_INTERFACE_CAP_SUPPORTS_TCP_GSO |
+			  VNET_HW_INTERFACE_CAP_SUPPORTS_UDP_GSO;
+	      xd->port_conf.txmode.offloads |=
+		DEV_TX_OFFLOAD_TCP_TSO | DEV_TX_OFFLOAD_UDP_TSO;
 	    }
 	  else
 	    clib_warning ("%s: TCP/UDP checksum offload must be enabled",
@@ -1062,15 +1074,15 @@ dpdk_bind_vmbus_devices_to_uio (dpdk_config_main_t * conf)
       dpdk_device_config_t *devconf = 0;
       if (num_whitelisted)
 	{
-	  uword *p = hash_get (conf->device_config_index_by_vmbus_addr,
-			       addr->as_u32[0]);
+	  uword *p =
+	    mhash_get (&conf->device_config_index_by_vmbus_addr, addr);
 	  if (!p)
 	    {
 	      /* No devices blacklisted, but have whitelisted. blacklist all
 	       * non-whitelisted */
 	      pool_get (conf->dev_confs, devconf);
-	      hash_set (conf->device_config_index_by_vmbus_addr,
-			addr->as_u32[0], devconf - conf->dev_confs);
+	      mhash_set (&conf->device_config_index_by_vmbus_addr, addr,
+			 devconf - conf->dev_confs, 0);
 	      devconf->vmbus_addr = *addr;
 	      devconf->dev_addr_type = VNET_DEV_ADDR_VMBUS;
 	      devconf->is_blacklisted = 1;
@@ -1084,15 +1096,16 @@ dpdk_bind_vmbus_devices_to_uio (dpdk_config_main_t * conf)
       /* Enforce Device blacklist by vmbus_addr */
       for (i = 0; i < vec_len (conf->blacklist_by_vmbus_addr); i++)
 	{
-	  u32 vmbus_as_u32 = conf->blacklist_by_vmbus_addr[i];
-	  if (vmbus_as_u32 == addr->as_u32[0])
+	  vlib_vmbus_addr_t *a1 = &conf->blacklist_by_vmbus_addr[i];
+	  vlib_vmbus_addr_t *a2 = addr;
+	  if (memcmp (a1, a2, sizeof (vlib_vmbus_addr_t)) == 0)
 	    {
 	      if (devconf == 0)
 		{
 		  /* Device not whitelisted */
 		  pool_get (conf->dev_confs, devconf);
-		  hash_set (conf->device_config_index_by_vmbus_addr,
-			    addr->as_u32[0], devconf - conf->dev_confs);
+		  mhash_set (&conf->device_config_index_by_vmbus_addr, addr,
+			     devconf - conf->dev_confs, 0);
 		  devconf->vmbus_addr = *addr;
 		  devconf->dev_addr_type = VNET_DEV_ADDR_VMBUS;
 		  devconf->is_blacklisted = 1;
@@ -1111,8 +1124,8 @@ dpdk_bind_vmbus_devices_to_uio (dpdk_config_main_t * conf)
 	  if (devconf == 0)
 	    {
 	      pool_get (conf->dev_confs, devconf);
-	      hash_set (conf->device_config_index_by_vmbus_addr,
-			addr->as_u32[0], devconf - conf->dev_confs);
+	      mhash_set (&conf->device_config_index_by_vmbus_addr, addr,
+			 devconf - conf->dev_confs, 0);
 	      devconf->vmbus_addr = *addr;
 	    }
 	  devconf->dev_addr_type = VNET_DEV_ADDR_VMBUS;
@@ -1156,15 +1169,14 @@ dpdk_device_config (dpdk_config_main_t *conf, void *addr,
     }
   else if (addr_type == VNET_DEV_ADDR_VMBUS)
     {
-      p = hash_get (conf->device_config_index_by_vmbus_addr,
-		    ((vlib_vmbus_addr_t *) (addr))->as_u32[0]);
+      p = mhash_get (&conf->device_config_index_by_vmbus_addr,
+		     (vlib_vmbus_addr_t *) (addr));
 
       if (!p)
 	{
 	  pool_get (conf->dev_confs, devconf);
-	  hash_set (conf->device_config_index_by_vmbus_addr,
-		    ((vlib_vmbus_addr_t *) (addr))->as_u32[0],
-		    devconf - conf->dev_confs);
+	  mhash_set (&conf->device_config_index_by_vmbus_addr, addr,
+		     devconf - conf->dev_confs, 0);
 	}
       else
 	return clib_error_return (
@@ -1310,7 +1322,8 @@ dpdk_config (vlib_main_t * vm, unformat_input_t * input)
     format (0, "%s/hugepages%c", vlib_unix_get_runtime_dir (), 0);
 
   conf->device_config_index_by_pci_addr = hash_create (0, sizeof (uword));
-  conf->device_config_index_by_vmbus_addr = hash_create (0, sizeof (uword));
+  mhash_init (&conf->device_config_index_by_vmbus_addr, sizeof (uword),
+	      sizeof (vlib_vmbus_addr_t));
 
   while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
     {
@@ -1407,7 +1420,7 @@ dpdk_config (vlib_main_t * vm, unformat_input_t * input)
       else if (unformat (input, "blacklist %U", unformat_vlib_vmbus_addr,
 			 &vmbus_addr))
 	{
-	  vec_add1 (conf->blacklist_by_vmbus_addr, vmbus_addr.as_u32[0]);
+	  vec_add1 (conf->blacklist_by_vmbus_addr, vmbus_addr);
 	}
       else
 	if (unformat
@@ -1677,6 +1690,10 @@ dpdk_config (vlib_main_t * vm, unformat_input_t * input)
   ret = rte_eal_init (vec_len (conf->eal_init_args),
 		      (char **) conf->eal_init_args);
 
+  /* enable the AVX-512 vPMDs in DPDK */
+  if (clib_cpu_supports_avx512_bitalg ())
+    rte_vect_set_max_simd_bitwidth (RTE_VECT_SIMD_512);
+
   /* lazy umount hugepages */
   umount2 ((char *) huge_dir_path, MNT_DETACH);
   rmdir ((char *) huge_dir_path);
@@ -1713,7 +1730,6 @@ dpdk_update_link_state (dpdk_device_t * xd, f64 now)
 
   if (LINK_STATE_ELOGS)
     {
-      vlib_main_t *vm = vlib_get_main ();
       ELOG_TYPE_DECLARE (e) =
       {
       .format =
@@ -1727,7 +1743,7 @@ dpdk_update_link_state (dpdk_device_t * xd, f64 now)
 	u8 old_link_state;
 	u8 new_link_state;
       } *ed;
-      ed = ELOG_DATA (&vm->elog_main, e);
+      ed = ELOG_DATA (&vlib_global_main.elog_main, e);
       ed->sw_if_index = xd->sw_if_index;
       ed->admin_up = (xd->flags & DPDK_DEVICE_FLAG_ADMIN_UP) != 0;
       ed->old_link_state = (u8)
@@ -1766,8 +1782,6 @@ dpdk_update_link_state (dpdk_device_t * xd, f64 now)
     {
       if (LINK_STATE_ELOGS)
 	{
-	  vlib_main_t *vm = vlib_get_main ();
-
 	  ELOG_TYPE_DECLARE (e) =
 	  {
 	  .format =
@@ -1779,7 +1793,7 @@ dpdk_update_link_state (dpdk_device_t * xd, f64 now)
 	    u32 sw_if_index;
 	    u32 flags;
 	  } *ed;
-	  ed = ELOG_DATA (&vm->elog_main, e);
+	  ed = ELOG_DATA (&vlib_global_main.elog_main, e);
 	  ed->sw_if_index = xd->sw_if_index;
 	  ed->flags = hw_flags;
 	}

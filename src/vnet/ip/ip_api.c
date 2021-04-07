@@ -28,6 +28,7 @@
 #include <vnet/ip/ip_types_api.h>
 #include <vnet/ip/ip_punt_drop.h>
 #include <vnet/ip/ip_types_api.h>
+#include <vnet/ip/ip_path_mtu.h>
 #include <vnet/fib/fib_table.h>
 #include <vnet/fib/fib_api.h>
 #include <vnet/ethernet/arp_packet.h>
@@ -71,6 +72,7 @@
   _ (SW_INTERFACE_IP6_ENABLE_DISABLE, sw_interface_ip6_enable_disable)        \
   _ (IP_TABLE_DUMP, ip_table_dump)                                            \
   _ (IP_ROUTE_DUMP, ip_route_dump)                                            \
+  _ (IP_ROUTE_V2_DUMP, ip_route_v2_dump)                                      \
   _ (IP_MTABLE_DUMP, ip_mtable_dump)                                          \
   _ (IP_MROUTE_DUMP, ip_mroute_dump)                                          \
   _ (IP_MROUTE_ADD_DEL, ip_mroute_add_del)                                    \
@@ -82,7 +84,9 @@
   _ (IP_TABLE_REPLACE_END, ip_table_replace_end)                              \
   _ (IP_TABLE_FLUSH, ip_table_flush)                                          \
   _ (IP_ROUTE_ADD_DEL, ip_route_add_del)                                      \
+  _ (IP_ROUTE_ADD_DEL_V2, ip_route_add_del_v2)                                \
   _ (IP_ROUTE_LOOKUP, ip_route_lookup)                                        \
+  _ (IP_ROUTE_LOOKUP_V2, ip_route_lookup_v2)                                  \
   _ (IP_TABLE_ADD_DEL, ip_table_add_del)                                      \
   _ (IP_PUNT_POLICE, ip_punt_police)                                          \
   _ (IP_PUNT_REDIRECT, ip_punt_redirect)                                      \
@@ -104,7 +108,11 @@
   _ (IP_REASSEMBLY_SET, ip_reassembly_set)                                    \
   _ (IP_REASSEMBLY_GET, ip_reassembly_get)                                    \
   _ (IP_REASSEMBLY_ENABLE_DISABLE, ip_reassembly_enable_disable)              \
-  _ (IP_PUNT_REDIRECT_DUMP, ip_punt_redirect_dump)
+  _ (IP_PUNT_REDIRECT_DUMP, ip_punt_redirect_dump)                            \
+  _ (IP_PATH_MTU_UPDATE, ip_path_mtu_update)                                  \
+  _ (IP_PATH_MTU_REPLACE_BEGIN, ip_path_mtu_replace_begin)                    \
+  _ (IP_PATH_MTU_REPLACE_END, ip_path_mtu_replace_end)                        \
+  _ (IP_PATH_MTU_GET, ip_path_mtu_get)
 
 static void
   vl_api_sw_interface_ip6_enable_disable_t_handler
@@ -230,6 +238,47 @@ send_ip_route_details (vpe_api_main_t * am,
   vec_free (rpaths);
 }
 
+static void
+send_ip_route_v2_details (vpe_api_main_t *am, vl_api_registration_t *reg,
+			  u32 context, fib_node_index_t fib_entry_index)
+{
+  fib_route_path_t *rpaths, *rpath;
+  vl_api_ip_route_v2_details_t *mp;
+  const fib_prefix_t *pfx;
+  vl_api_fib_path_t *fp;
+  int path_count;
+
+  rpaths = NULL;
+  pfx = fib_entry_get_prefix (fib_entry_index);
+  rpaths = fib_entry_encode (fib_entry_index);
+
+  path_count = vec_len (rpaths);
+  mp = vl_msg_api_alloc (sizeof (*mp) + path_count * sizeof (*fp));
+  if (!mp)
+    return;
+  clib_memset (mp, 0, sizeof (*mp));
+  mp->_vl_msg_id = ntohs (VL_API_IP_ROUTE_V2_DETAILS);
+  mp->context = context;
+
+  ip_prefix_encode (pfx, &mp->route.prefix);
+  mp->route.table_id = htonl (fib_table_get_table_id (
+    fib_entry_get_fib_index (fib_entry_index), pfx->fp_proto));
+  mp->route.n_paths = path_count;
+  mp->route.src = fib_entry_get_best_source (fib_entry_index);
+  mp->route.stats_index = htonl (fib_table_entry_get_stats_index (
+    fib_entry_get_fib_index (fib_entry_index), pfx));
+
+  fp = mp->route.paths;
+  vec_foreach (rpath, rpaths)
+    {
+      fib_api_path_encode (rpath, fp);
+      fp++;
+    }
+
+  vl_api_send_msg (reg, (u8 *) mp);
+  vec_free (rpaths);
+}
+
 typedef struct apt_ip6_fib_show_ctx_t_
 {
   fib_node_index_t *entries;
@@ -264,6 +313,45 @@ vl_api_ip_route_dump_t_handler (vl_api_ip_route_dump_t * mp)
   {
     send_ip_route_details (am, reg, mp->context, *fib_entry_index);
   }
+
+  vec_free (ctx.feis);
+}
+
+static void
+vl_api_ip_route_v2_dump_t_handler (vl_api_ip_route_v2_dump_t *mp)
+{
+  vpe_api_main_t *am = &vpe_api_main;
+  fib_node_index_t *fib_entry_index;
+  vl_api_registration_t *reg;
+  fib_protocol_t fproto;
+  fib_source_t src;
+  u32 fib_index;
+
+  reg = vl_api_client_index_to_registration (mp->client_index);
+  if (!reg)
+    return;
+
+  vl_api_ip_fib_dump_walk_ctx_t ctx = {
+    .feis = NULL,
+  };
+
+  fproto = (mp->table.is_ip6 ? FIB_PROTOCOL_IP6 : FIB_PROTOCOL_IP4);
+  fib_index = fib_table_find (fproto, ntohl (mp->table.table_id));
+  src = mp->src;
+
+  if (INDEX_INVALID == fib_index)
+    return;
+
+  if (src)
+    fib_table_walk_w_src (fib_index, fproto, src, vl_api_ip_fib_dump_walk,
+			  &ctx);
+  else
+    fib_table_walk (fib_index, fproto, vl_api_ip_fib_dump_walk, &ctx);
+
+  vec_foreach (fib_entry_index, ctx.feis)
+    {
+      send_ip_route_v2_details (am, reg, mp->context, *fib_entry_index);
+    }
 
   vec_free (ctx.feis);
 }
@@ -579,9 +667,60 @@ ip_route_add_del_t_handler (vl_api_ip_route_add_del_t * mp, u32 * stats_index)
 	goto out;
     }
 
-  rv = fib_api_route_add_del (mp->is_add,
-			      mp->is_multipath,
-			      fib_index, &pfx, entry_flags, rpaths);
+  rv = fib_api_route_add_del (mp->is_add, mp->is_multipath, fib_index, &pfx,
+			      FIB_SOURCE_API, entry_flags, rpaths);
+
+  if (mp->is_add && 0 == rv)
+    *stats_index = fib_table_entry_get_stats_index (fib_index, &pfx);
+
+out:
+  vec_free (rpaths);
+
+  return (rv);
+}
+
+static int
+ip_route_add_del_v2_t_handler (vl_api_ip_route_add_del_v2_t *mp,
+			       u32 *stats_index)
+{
+  fib_route_path_t *rpaths = NULL, *rpath;
+  fib_entry_flag_t entry_flags;
+  vl_api_fib_path_t *apath;
+  fib_source_t src;
+  fib_prefix_t pfx;
+  u32 fib_index;
+  int rv, ii;
+
+  entry_flags = FIB_ENTRY_FLAG_NONE;
+  ip_prefix_decode (&mp->route.prefix, &pfx);
+
+  rv = fib_api_table_id_decode (pfx.fp_proto, ntohl (mp->route.table_id),
+				&fib_index);
+  if (0 != rv)
+    goto out;
+
+  if (0 != mp->route.n_paths)
+    vec_validate (rpaths, mp->route.n_paths - 1);
+
+  for (ii = 0; ii < mp->route.n_paths; ii++)
+    {
+      apath = &mp->route.paths[ii];
+      rpath = &rpaths[ii];
+
+      rv = fib_api_path_decode (apath, rpath);
+
+      if ((rpath->frp_flags & FIB_ROUTE_PATH_LOCAL) &&
+	  (~0 == rpath->frp_sw_if_index))
+	entry_flags |= (FIB_ENTRY_FLAG_CONNECTED | FIB_ENTRY_FLAG_LOCAL);
+
+      if (0 != rv)
+	goto out;
+    }
+
+  src = (0 == mp->route.src ? FIB_SOURCE_API : mp->route.src);
+
+  rv = fib_api_route_add_del (mp->is_add, mp->is_multipath, fib_index, &pfx,
+			      src, entry_flags, rpaths);
 
   if (mp->is_add && 0 == rv)
     *stats_index = fib_table_entry_get_stats_index (fib_index, &pfx);
@@ -607,6 +746,23 @@ vl_api_ip_route_add_del_t_handler (vl_api_ip_route_add_del_t * mp)
     rmp->stats_index = htonl (stats_index);
   }))
   /* *INDENT-ON* */
+}
+
+void
+vl_api_ip_route_add_del_v2_t_handler (vl_api_ip_route_add_del_v2_t *mp)
+{
+  vl_api_ip_route_add_del_v2_reply_t *rmp;
+  u32 stats_index = ~0;
+  int rv;
+
+  rv = ip_route_add_del_v2_t_handler (mp, &stats_index);
+
+  /* clang-format off */
+  REPLY_MACRO2 (VL_API_IP_ROUTE_ADD_DEL_V2_REPLY,
+  ({
+    rmp->stats_index = htonl (stats_index);
+  }))
+  /* clang-format on */
 }
 
 void
@@ -662,6 +818,65 @@ vl_api_ip_route_lookup_t_handler (vl_api_ip_route_lookup_t * mp)
       }
   }));
   /* *INDENT-ON* */
+  vec_free (rpaths);
+}
+
+void
+vl_api_ip_route_lookup_v2_t_handler (vl_api_ip_route_lookup_v2_t *mp)
+{
+  vl_api_ip_route_lookup_v2_reply_t *rmp = NULL;
+  fib_route_path_t *rpaths = NULL, *rpath;
+  const fib_prefix_t *pfx = NULL;
+  fib_prefix_t lookup;
+  vl_api_fib_path_t *fp;
+  fib_node_index_t fib_entry_index;
+  u32 fib_index;
+  int npaths = 0;
+  fib_source_t src = 0;
+  int rv;
+
+  ip_prefix_decode (&mp->prefix, &lookup);
+  rv = fib_api_table_id_decode (lookup.fp_proto, ntohl (mp->table_id),
+				&fib_index);
+  if (PREDICT_TRUE (!rv))
+    {
+      if (mp->exact)
+	fib_entry_index = fib_table_lookup_exact_match (fib_index, &lookup);
+      else
+	fib_entry_index = fib_table_lookup (fib_index, &lookup);
+      if (fib_entry_index == FIB_NODE_INDEX_INVALID)
+	rv = VNET_API_ERROR_NO_SUCH_ENTRY;
+      else
+	{
+	  pfx = fib_entry_get_prefix (fib_entry_index);
+	  rpaths = fib_entry_encode (fib_entry_index);
+	  npaths = vec_len (rpaths);
+	  src = fib_entry_get_best_source (fib_entry_index);
+	}
+    }
+
+  /* clang-format off */
+  REPLY_MACRO3_ZERO(VL_API_IP_ROUTE_LOOKUP_V2_REPLY,
+                    npaths * sizeof (*fp),
+  ({
+    if (!rv)
+      {
+        ip_prefix_encode (pfx, &rmp->route.prefix);
+        rmp->route.table_id = mp->table_id;
+        rmp->route.n_paths = npaths;
+        rmp->route.src = src;
+        rmp->route.stats_index = fib_table_entry_get_stats_index (fib_index, pfx);
+        rmp->route.stats_index = htonl (rmp->route.stats_index);
+
+        fp = rmp->route.paths;
+        vec_foreach (rpath, rpaths)
+          {
+            fib_api_path_encode (rpath, fp);
+            fp++;
+          }
+      }
+  }));
+  /* clang-format on */
   vec_free (rpaths);
 }
 
@@ -1134,18 +1349,18 @@ static void
   REPLY_MACRO (VL_API_IP_CONTAINER_PROXY_ADD_DEL_REPLY);
 }
 
-typedef struct ip_container_proxy_walk_ctx_t_
+typedef struct ip_walk_ctx_t_
 {
   vl_api_registration_t *reg;
   u32 context;
-} ip_container_proxy_walk_ctx_t;
+} ip_walk_ctx_t;
 
 static int
 ip_container_proxy_send_details (const fib_prefix_t * pfx, u32 sw_if_index,
 				 void *args)
 {
   vl_api_ip_container_proxy_details_t *mp;
-  ip_container_proxy_walk_ctx_t *ctx = args;
+  ip_walk_ctx_t *ctx = args;
 
   mp = vl_msg_api_alloc (sizeof (*mp));
   if (!mp)
@@ -1173,7 +1388,7 @@ vl_api_ip_container_proxy_dump_t_handler (vl_api_ip_container_proxy_dump_t *
   if (!reg)
     return;
 
-  ip_container_proxy_walk_ctx_t ctx = {
+  ip_walk_ctx_t ctx = {
     .context = mp->context,
     .reg = reg,
   };
@@ -1624,21 +1839,15 @@ void
   REPLY_MACRO (VL_API_IP_REASSEMBLY_ENABLE_DISABLE_REPLY);
 }
 
-typedef struct ip_punt_redirect_walk_ctx_t_
-{
-  vl_api_registration_t *reg;
-  u32 context;
-} ip_punt_redirect_walk_ctx_t;
-
 static walk_rc_t
 send_ip_punt_redirect_details (u32 rx_sw_if_index,
 			       const ip_punt_redirect_rx_t * ipr, void *arg)
 {
-  ip_punt_redirect_walk_ctx_t *ctx = arg;
   vl_api_ip_punt_redirect_details_t *mp;
   fib_path_encode_ctx_t path_ctx = {
     .rpaths = NULL,
   };
+  ip_walk_ctx_t *ctx = arg;
 
   mp = vl_msg_api_alloc (sizeof (*mp));
   if (!mp)
@@ -1676,7 +1885,7 @@ vl_api_ip_punt_redirect_dump_t_handler (vl_api_ip_punt_redirect_dump_t * mp)
   if (mp->is_ipv6 == 1)
     fproto = FIB_PROTOCOL_IP6;
 
-  ip_punt_redirect_walk_ctx_t ctx = {
+  ip_walk_ctx_t ctx = {
     .reg = reg,
     .context = mp->context,
   };
@@ -1697,6 +1906,73 @@ vl_api_ip_punt_redirect_dump_t_handler (vl_api_ip_punt_redirect_dump_t * mp)
     }
   else
     ip_punt_redirect_walk (fproto, send_ip_punt_redirect_details, &ctx);
+}
+
+void
+vl_api_ip_path_mtu_update_t_handler (vl_api_ip_path_mtu_update_t *mp)
+{
+  vl_api_ip_path_mtu_update_reply_t *rmp;
+  ip_address_t nh;
+  int rv = 0;
+
+  ip_address_decode2 (&mp->pmtu.nh, &nh);
+
+  rv = ip_path_mtu_update (&nh, ntohl (mp->pmtu.table_id),
+			   ntohs (mp->pmtu.path_mtu));
+
+  REPLY_MACRO (VL_API_IP_PATH_MTU_UPDATE_REPLY);
+}
+
+void
+vl_api_ip_path_mtu_replace_begin_t_handler (
+  vl_api_ip_path_mtu_replace_begin_t *mp)
+{
+  vl_api_ip_path_mtu_replace_begin_reply_t *rmp;
+  int rv;
+
+  rv = ip_path_mtu_replace_begin ();
+
+  REPLY_MACRO (VL_API_IP_PATH_MTU_REPLACE_BEGIN_REPLY);
+}
+
+void
+vl_api_ip_path_mtu_replace_end_t_handler (vl_api_ip_path_mtu_replace_end_t *mp)
+{
+  vl_api_ip_path_mtu_replace_end_reply_t *rmp;
+  int rv;
+
+  rv = ip_path_mtu_replace_end ();
+
+  REPLY_MACRO (VL_API_IP_PATH_MTU_REPLACE_END_REPLY);
+}
+
+static void
+send_ip_path_mtu_details (index_t ipti, vl_api_registration_t *rp, u32 context)
+{
+  vl_api_ip_path_mtu_details_t *rmp;
+  ip_address_t ip;
+  ip_pmtu_t *ipt;
+
+  ipt = ip_path_mtu_get (ipti);
+
+  REPLY_MACRO_DETAILS4 (VL_API_IP_PATH_MTU_DETAILS, rp, context, ({
+			  ip_pmtu_get_ip (ipt, &ip);
+			  ip_address_encode2 (&ip, &rmp->pmtu.nh);
+			  rmp->pmtu.table_id =
+			    htonl (ip_pmtu_get_table_id (ipt));
+			  rmp->pmtu.path_mtu = htons (ipt->ipt_cfg_pmtu);
+			}));
+}
+
+static void
+vl_api_ip_path_mtu_get_t_handler (vl_api_ip_path_mtu_get_t *mp)
+{
+  vl_api_ip_path_mtu_get_reply_t *rmp;
+  i32 rv = 0;
+
+  REPLY_AND_DETAILS_MACRO (
+    VL_API_IP_PATH_MTU_GET_REPLY, ip_pmtu_pool,
+    ({ send_ip_path_mtu_details (cursor, rp, mp->context); }));
 }
 
 #define vl_msg_name_crc_list
@@ -1731,6 +2007,8 @@ ip_api_hookup (vlib_main_t * vm)
    */
   am->is_mp_safe[VL_API_IP_ROUTE_ADD_DEL] = 1;
   am->is_mp_safe[VL_API_IP_ROUTE_ADD_DEL_REPLY] = 1;
+  am->is_mp_safe[VL_API_IP_ROUTE_ADD_DEL_V2] = 1;
+  am->is_mp_safe[VL_API_IP_ROUTE_ADD_DEL_V2_REPLY] = 1;
 
   /*
    * Set up the (msg_name, crc, message-id) table
