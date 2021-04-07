@@ -2469,6 +2469,9 @@ sr_localsids_init (vlib_main_t * vm)
     dpo_register_new_type (&sr_loc_vft, sr_loc_un_perf_nodes);
   /* Init memory for localsid plugins */
   sm->plugin_functions_by_key = hash_create_string (0, sizeof (uword));
+
+  sm->log_class = vlib_log_register_class ("sr_localsid", 0);
+
   return 0;
 }
 
