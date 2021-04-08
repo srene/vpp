@@ -407,6 +407,10 @@ ip6_sr_compute_rewrite_string_insert (ip6_address_t * sl)
   return rs;
 }
 
+#define DEBUG(...)		vlib_log_debug(mapme_main.log_class, __VA_ARGS__);
+#define WARN(...)		vlib_log_warn(mapme_main.log_class, __VA_ARGS__);
+#define ERROR(...)		vlib_log_err(mapme_main.log_class, __VA_ARGS__);
+
 #endif /* included_vnet_sr_h */
 
 /*
