@@ -2472,6 +2472,7 @@ sr_localsids_init (vlib_main_t * vm)
 
   sm->log_class = vlib_log_register_class ("sr_localsid", 0);
 
+  WARN("Logging SR");
   return 0;
 }
 
