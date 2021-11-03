@@ -699,6 +699,7 @@ lookup_dpo_ip6_inline (vlib_main_t * vm,
 
     next_index = node->cached_next_index;
 
+    printf("lookup dpo ip6 inline \n");
     while (n_left_from > 0)
     {
         u32 n_left_to_next;

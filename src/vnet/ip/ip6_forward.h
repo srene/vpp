@@ -81,6 +81,7 @@ ip6_lookup_inline (vlib_main_t * vm,
 	  const dpo_id_t *dpo0, *dpo1;
 	  const load_balance_t *lb0, *lb1;
 
+     
 	  /* Prefetch next iteration. */
 	  {
 	    vlib_buffer_t *p2, *p3;
@@ -105,6 +106,10 @@ ip6_lookup_inline (vlib_main_t * vm,
 
 	  dst_addr0 = &ip0->dst_address;
 	  dst_addr1 = &ip1->dst_address;
+
+	  u8 *s0 = format(0,"ip6 lookup %U", format_ip6_address,dst_addr0);
+
+	  printf(" %s %i\n",s0,vnet_buffer (p0)->ip.fib_index);
 
 	  ip_lookup_set_buffer_fib_index (im->fib_index_by_sw_if_index, p0);
 	  ip_lookup_set_buffer_fib_index (im->fib_index_by_sw_if_index, p1);

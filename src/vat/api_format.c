@@ -12300,9 +12300,9 @@ vl_api_ip_route_details_t_handler (vl_api_ip_route_details_t * mp)
   int i;
 
   print (vam->ofp,
-	 "table-id %d, prefix %U/%d",
+	 "table-id %d, prefix %U/%d packets %i",
 	 ntohl (mp->route.table_id),
-	 format_ip46_address, mp->route.prefix.address, mp->route.prefix.len);
+	 format_ip46_address, mp->route.prefix.address, mp->route.prefix.len,mp->route.packets);
   for (i = 0; i < count; i++)
     {
       fp = &mp->route.paths[i];
@@ -12344,6 +12344,8 @@ static void vl_api_ip_route_details_t_handler_json
     }
   vat_json_object_add_uint (node, "mask_length", mp->route.prefix.len);
   vat_json_object_add_uint (node, "path_count", count);
+  vat_json_object_add_uint (node, "packet", ntohl (mp->route.packets));
+
   for (i = 0; i < count; i++)
     {
       fp = &mp->route.paths[i];

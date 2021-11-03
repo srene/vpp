@@ -1565,6 +1565,7 @@ ip6_local_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 			 IP6_ERROR_ICMP_CHECKSUM,
 			 "Wrong IP6 errors constants");
 
+      printf("ip6 local inline \n");
 	  error = !good_l4_csum ? IP6_ERROR_UDP_CHECKSUM + type : error;
 
 	  /* Drop packets from unroutable hosts. */
@@ -1758,6 +1759,7 @@ ip6_rewrite_inline_with_gso (vlib_main_t * vm,
 	  u32 tx_sw_if_index0, tx_sw_if_index1;
 	  bool is_locally_originated0, is_locally_originated1;
 
+      printf("ip6 lookup rewrite\n");
 	  /* Prefetch next iteration. */
 	  {
 	    vlib_buffer_t *p2, *p3;

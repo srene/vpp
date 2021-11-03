@@ -143,6 +143,7 @@ typedef ip_route
   u32 stats_index;
   vl_api_prefix_t prefix;
   u8 n_paths;
+  u32 packets;
   vl_api_fib_path_t paths[n_paths];
 };
 

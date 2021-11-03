@@ -67,6 +67,8 @@
 
 #include <vnet/format_fns.h>
 
+#include <vnet/fib/ip6_fib.h>
+
 #define foreach_ip_api_msg                                              \
 _(SW_INTERFACE_IP6_ENABLE_DISABLE, sw_interface_ip6_enable_disable)     \
 _(IP_TABLE_DUMP, ip_table_dump)                                         \
@@ -221,6 +223,19 @@ send_ip_route_details (vpe_api_main_t * am,
     fib_api_path_encode (rpath, fp);
     fp++;
   }
+
+  u32 fib_index = fib_entry_get_fib_index(fib_entry_index);
+  index_t fw_lbi = ip6_fib_table_fwding_lookup(fib_index, &pfx->fp_addr.ip6);
+
+  //load_balance_t *lb;
+  //lb = load_balance_get(fw_lbi);
+  //u8 *s0 = format(0,"Storing interest %U",format_load_balance,fw_lbi);
+  vlib_counter_t to;
+  vlib_get_combined_counter(&(load_balance_main.lbm_to_counters), fw_lbi, &to);
+
+  printf("to %lu\n",to.packets);
+
+  mp->route.packets = to.packets;
 
   vl_api_send_msg (reg, (u8 *) mp);
   vec_free (rpaths);

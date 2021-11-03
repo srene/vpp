@@ -98,8 +98,10 @@ static void
 vl_api_l2_xconnect_dump_t_handler (vl_api_l2_xconnect_dump_t * mp)
 {
   vl_api_registration_t *reg;
+  vnet_main_t *vnm = vnet_get_main ();
+  vnet_interface_main_t *im = &vnm->interface_main;
   l2input_main_t *l2im = &l2input_main;
-  u32 sw_if_index;
+  vnet_sw_interface_t *swif;
   l2_input_config_t *config;
 
   reg = vl_api_client_index_to_registration (mp->client_index);
@@ -107,13 +109,13 @@ vl_api_l2_xconnect_dump_t_handler (vl_api_l2_xconnect_dump_t * mp)
     return;
 
   /* *INDENT-OFF* */
-  vec_foreach_index (sw_if_index, l2im->configs)
-    {
-      config = vec_elt_at_index (l2im->configs, sw_if_index);
-      if (l2_input_is_xconnect (config))
-	send_l2_xconnect_details (reg, mp->context, sw_if_index,
-				  config->output_sw_if_index);
-    }
+  pool_foreach (swif, im->sw_interfaces)
+   {
+    config = vec_elt_at_index (l2im->configs, swif->sw_if_index);
+    if (l2_input_is_xconnect(config))
+      send_l2_xconnect_details (reg, mp->context, swif->sw_if_index,
+                                config->output_sw_if_index);
+  }
   /* *INDENT-ON* */
 }
 
