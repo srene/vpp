@@ -217,13 +217,6 @@ send_ip_route_details (vpe_api_main_t * am,
     htonl (fib_table_entry_get_stats_index
 	   (fib_entry_get_fib_index (fib_entry_index), pfx));
 
-  fp = mp->route.paths;
-  vec_foreach (rpath, rpaths)
-  {
-    fib_api_path_encode (rpath, fp);
-    fp++;
-  }
-
   u32 fib_index = fib_entry_get_fib_index(fib_entry_index);
   index_t fw_lbi = ip6_fib_table_fwding_lookup(fib_index, &pfx->fp_addr.ip6);
 
@@ -233,9 +226,18 @@ send_ip_route_details (vpe_api_main_t * am,
   vlib_counter_t to;
   vlib_get_combined_counter(&(load_balance_main.lbm_to_counters), fw_lbi, &to);
 
-  printf("to %lu\n",to.packets);
+  //printf("to %lu\n",to.packets);
 
-  mp->route.packets = to.packets;
+  mp->route.packets = htonl(to.packets);
+
+  fp = mp->route.paths;
+  vec_foreach (rpath, rpaths)
+  {
+    fib_api_path_encode (rpath, fp);
+    fp++;
+  }
+
+
 
   vl_api_send_msg (reg, (u8 *) mp);
   vec_free (rpaths);

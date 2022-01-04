@@ -1565,7 +1565,7 @@ ip6_local_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 			 IP6_ERROR_ICMP_CHECKSUM,
 			 "Wrong IP6 errors constants");
 
-      printf("ip6 local inline \n");
+      //printf("ip6 local inline \n");
 	  error = !good_l4_csum ? IP6_ERROR_UDP_CHECKSUM + type : error;
 
 	  /* Drop packets from unroutable hosts. */
